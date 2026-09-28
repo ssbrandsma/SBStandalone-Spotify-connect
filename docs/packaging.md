@@ -18,11 +18,11 @@ Radio can download them without TLS. Pass `-BaseUrl` when publishing through a
 different static web directory.
 
 Add `http://49.12.198.91/sbspotifyconnect/extensions.xml` to LMS under **Additional
-Repositories**. The two public files for version 0.5.0 are:
+Repositories**. The two public files for version 0.5.4 are:
 
 ```text
 http://49.12.198.91/sbspotifyconnect/extensions.xml
-http://49.12.198.91/sbspotifyconnect/SpotifyConnect-0.5.0.zip
+http://49.12.198.91/sbspotifyconnect/SpotifyConnect-0.5.4.zip
 ```
 
 Applet-owned executables install under

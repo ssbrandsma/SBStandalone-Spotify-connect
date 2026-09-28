@@ -44,6 +44,7 @@ $RequiredEntries = @(
     'SpotifyConnectState.lua',
     'SpotifyNowPlaying.lua',
     'SpotifyPlayback.lua',
+    'SpotifyResolver.lua',
     'SpotifyService.lua',
     'strings.txt'
 )
@@ -93,7 +94,7 @@ $Xml = @"
     <applet name="SpotifyConnect" version="$(& $Escape $Version)" target="baby" minTarget="7.7" maxTarget="*">
       <title lang="EN">Spotify Connect</title>
       <desc lang="EN">Standalone Spotify Connect playback for Logitech Squeezebox Radio. LMS is only needed to install the applet.</desc>
-      <changes lang="EN">Responsive playback controls, remote volume, pairing QR code, and redesigned Now Playing screen.</changes>
+      <changes lang="EN">Fix playback across natural track boundaries and rapid Spotify track changes.</changes>
       <creator>Sjoerd Brandsma</creator>
       <url>$(& $Escape $ZipUrl)</url>
       <sha>$ZipSha1</sha>
@@ -101,7 +102,7 @@ $Xml = @"
     <applet name="SpotifyConnect" version="$(& $Escape $Version)" target="fab4" minTarget="7.7" maxTarget="*">
       <title lang="EN">Spotify Connect</title>
       <desc lang="EN">Standalone Spotify Connect playback for Logitech Squeezebox Touch. LMS is only needed to install the applet.</desc>
-      <changes lang="EN">Responsive playback controls, remote volume, pairing QR code, and redesigned Now Playing screen.</changes>
+      <changes lang="EN">Fix playback across natural track boundaries and rapid Spotify track changes.</changes>
       <creator>Sjoerd Brandsma</creator>
       <url>$(& $Escape $ZipUrl)</url>
       <sha>$ZipSha1</sha>

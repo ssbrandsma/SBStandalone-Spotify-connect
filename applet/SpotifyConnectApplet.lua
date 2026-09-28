@@ -14,6 +14,7 @@ local SpotifyNowPlaying = require("applets.SpotifyConnect.SpotifyNowPlaying")
 local Player = require("jive.slim.Player")
 local Timer = require("jive.ui.Timer")
 local math = require("math")
+local os = require("os")
 local Log = require("jive.utils.log")
 local state = require("applets.SpotifyConnect.SpotifyConnectState")
 local tostring = tostring
@@ -48,6 +49,7 @@ local function showRemoteVolume(self, percent)
 end
 
 function init(self)
+    os.execute("chmod 755 /usr/share/jive/applets/SpotifyConnect/librespot /usr/share/jive/applets/SpotifyConnect/ogg-http-bridge /usr/share/jive/applets/SpotifyConnect/spotify-metadata /usr/share/jive/applets/SpotifyConnect/spotify-metadata-event /usr/share/jive/applets/SpotifyConnect/spotify-supervisor 2>/dev/null")
     self._settings = self._settings or { enabled = false, deviceName = "Squeezebox Radio" }
     state.applet = self
     self.service = SpotifyService()

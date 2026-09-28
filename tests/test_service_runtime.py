@@ -47,6 +47,33 @@ def test_status_reader_with_volume_and_track_changes():
     assert events.volume == 65535
 
 
+def test_service_runs_native_helpers_from_ram():
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute('''
+        commands = {}
+        package.loaded["loop.simple"] = { class = function() end }
+        package.loaded["jive.ui.Timer"] = function() end
+        package.loaded["os"] = { execute = function(command)
+            table.insert(commands, command)
+            if string.find(command, "kill %-0") then return 1 end
+            if string.find(command, "credentials.json") then return 1 end
+            return 0
+        end }
+        package.loaded["io"] = { open = function() return nil end }
+        package.loaded["json"] = { decode = function() return {} end }
+    ''')
+    path = Path(__file__).parents[1] / "applet/SpotifyService.lua"
+    service = lua.execute(path.read_text(), "ram_runtime_test")
+    service.init(service, lua.table_from({"_settings": lua.table_from({})}))
+    assert service.start(service, False) is True
+    commands = [lua.globals().commands[i] for i in range(1, len(lua.globals().commands) + 1)]
+    assert any("cp '/usr/share/jive/applets/SpotifyConnect'/$f '/dev/spotify-connect-runtime'/$f" in command for command in commands)
+    launch_commands = [command for command in commands if "ogg-http-bridge" in command or "spotify-supervisor" in command]
+    assert any("'/dev/spotify-connect-runtime/ogg-http-bridge'" in command for command in launch_commands)
+    assert any("'/dev/spotify-connect-runtime/spotify-supervisor'" in command for command in launch_commands)
+    assert any("'/dev/spotify-connect-runtime/librespot'" in command for command in launch_commands)
+
+
 def test_watcher_switches_tracks_and_applies_u16_volume():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute('''

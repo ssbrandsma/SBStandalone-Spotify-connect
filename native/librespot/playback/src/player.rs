@@ -1627,7 +1627,12 @@ impl Future for PlayerInternal {
             {
                 let track_id = track_id.clone();
 
-                if (!*suggested_to_preload_next_track)
+                // A streaming-only source has a small bounded producer queue.
+                // Preloading stops draining that queue until the current track
+                // ends, which can strand the next passthrough decoder. Load at
+                // the track boundary instead.
+                if (!cfg!(feature = "streaming-only"))
+                    && (!*suggested_to_preload_next_track)
                     && ((duration_ms as i64 - stream_position_ms as i64)
                         < PRELOAD_NEXT_TRACK_BEFORE_END_DURATION_MS as i64)
                     && stream_loader_controller.range_to_end_available()
@@ -2017,6 +2022,26 @@ impl PlayerInternal {
                 "Player::handle_command_load called from invalid state: {:?}",
                 self.state
             )));
+        }
+
+        // Spotify can repeat a load command while the first request is still
+        // opening its streaming reader. Replacing that loader loses everything
+        // it has already consumed, but Spotify's track clock keeps advancing,
+        // which cuts the same amount from the end of passthrough playback.
+        #[cfg(feature = "streaming-only")]
+        if let PlayerState::Loading {
+            track_id: current_track_id,
+            play_request_id: current_play_request_id,
+            start_playback,
+            ..
+        } = &mut self.state
+        {
+            if *current_track_id == track_id {
+                info!("Coalescing duplicate load for streaming-only track <{track_id}>");
+                *current_play_request_id = play_request_id;
+                *start_playback = play;
+                return Ok(());
+            }
         }
 
         // Now we check at different positions whether we already have a pre-loaded version

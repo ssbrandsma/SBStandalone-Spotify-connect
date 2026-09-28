@@ -4,21 +4,21 @@
     <title lang="EN">Squeezebox Radio Spotify Connect Repository</title>
   </details>
   <applets>
-    <applet name="SpotifyConnect" version="0.5.0" target="baby" minTarget="7.7" maxTarget="*">
+    <applet name="SpotifyConnect" version="0.5.4" target="baby" minTarget="7.7" maxTarget="*">
       <title lang="EN">Spotify Connect</title>
       <desc lang="EN">Standalone Spotify Connect playback for Logitech Squeezebox Radio. LMS is only needed to install the applet.</desc>
-      <changes lang="EN">Responsive playback controls, remote volume, pairing QR code, and redesigned Now Playing screen.</changes>
+      <changes lang="EN">Fix playback across natural track boundaries and rapid Spotify track changes.</changes>
       <creator>Sjoerd Brandsma</creator>
-      <url>http://49.12.198.91/sbspotifyconnect/SpotifyConnect-0.5.0.zip</url>
-      <sha>3cfb7debb244514988dce1d2dc1b4c469a886409</sha>
+      <url>http://49.12.198.91/sbspotifyconnect/SpotifyConnect-0.5.4.zip</url>
+      <sha>7ba64e938f67c982e8970a9b04a06615b2a2a5a8</sha>
     </applet>
-    <applet name="SpotifyConnect" version="0.5.0" target="fab4" minTarget="7.7" maxTarget="*">
+    <applet name="SpotifyConnect" version="0.5.4" target="fab4" minTarget="7.7" maxTarget="*">
       <title lang="EN">Spotify Connect</title>
       <desc lang="EN">Standalone Spotify Connect playback for Logitech Squeezebox Touch. LMS is only needed to install the applet.</desc>
-      <changes lang="EN">Responsive playback controls, remote volume, pairing QR code, and redesigned Now Playing screen.</changes>
+      <changes lang="EN">Fix playback across natural track boundaries and rapid Spotify track changes.</changes>
       <creator>Sjoerd Brandsma</creator>
-      <url>http://49.12.198.91/sbspotifyconnect/SpotifyConnect-0.5.0.zip</url>
-      <sha>3cfb7debb244514988dce1d2dc1b4c469a886409</sha>
+      <url>http://49.12.198.91/sbspotifyconnect/SpotifyConnect-0.5.4.zip</url>
+      <sha>7ba64e938f67c982e8970a9b04a06615b2a2a5a8</sha>
     </applet>
   </applets>
 </extensions>

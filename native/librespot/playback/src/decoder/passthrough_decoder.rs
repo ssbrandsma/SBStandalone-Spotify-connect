@@ -38,6 +38,7 @@ pub struct PassthroughDecoder<R: Read + Seek> {
     eos: bool,
     bos: bool,
     ofsgp_page: u64,
+    position_ms: u32,
     stream_serial: u32,
     ident: Vec<u8>,
     comment: Vec<u8>,
@@ -73,6 +74,7 @@ impl<R: Read + Seek> PassthroughDecoder<R> {
             rdr,
             wtr: PacketWriter::new(Vec::new()),
             ofsgp_page: 0,
+            position_ms: 0,
             stream_serial,
             ident,
             comment,
@@ -91,12 +93,13 @@ impl<R: Read + Seek> AudioDecoder for PassthroughDecoder<R> {
     fn seek(&mut self, position_ms: u32) -> Result<u32, DecoderError> {
         #[cfg(feature = "streaming-only")]
         {
-            if position_ms == 0 && !self.bos {
-                return Ok(0);
+            if position_ms != self.position_ms {
+                warn!(
+                    "streaming-only mode cannot seek to {position_ms} ms; continuing at {} ms",
+                    self.position_ms
+                );
             }
-            return Err(DecoderError::PassthroughDecoder(
-                "seek is unsupported in streaming-only mode".into(),
-            ));
+            return Ok(self.position_ms);
         }
         let absgp = (position_ms as f64 * PAGES_PER_MS) as u64;
 
@@ -216,6 +219,7 @@ impl<R: Read + Seek> AudioDecoder for PassthroughDecoder<R> {
 
             if !data.is_empty() {
                 let position_ms = Self::position_pcm_to_ms(pckgp_page);
+                self.position_ms = position_ms;
                 let packet_position = AudioPacketPosition {
                     position_ms,
                     skipped: false,

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 const MAX_PAGE: usize = 27 + 255 + 255 * 255;
 const MAX_HEADERS: usize = 65536;
 const STARTUP_LEAD_MS: u64 = 3000;
+const HTTP_REQUEST_TIMEOUT_SECS: u64 = 15;
 
 unsafe extern "C" {
     fn setsockopt(fd: i32, level: i32, option: i32, value: *const i32, length: u32) -> i32;
@@ -88,12 +89,18 @@ impl Headers {
 }
 
 fn accept_http(mut s: TcpStream) -> io::Result<TcpStream> {
+    // The Radio's Linux 2.6 accept path can preserve O_NONBLOCK from the
+    // listener. A rapid reconnect may be accepted before its request bytes
+    // arrive, so use a blocking client socket bounded by the timeout below.
+    s.set_nonblocking(false)?;
     let send_buffer: i32 = 16384;
     // Linux doubles SO_SNDBUF for bookkeeping: a 32768-byte socket limit.
     if unsafe { setsockopt(s.as_raw_fd(), 1, 7, &send_buffer, 4) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    s.set_read_timeout(Some(Duration::from_secs(2)))?;
+    // SqueezePlay can establish the localhost connection before its network
+    // task gets enough CPU to write the request, especially at a track edge.
+    s.set_read_timeout(Some(Duration::from_secs(HTTP_REQUEST_TIMEOUT_SECS)))?;
     s.set_write_timeout(Some(Duration::from_secs(2)))?;
     let mut request = Vec::with_capacity(4096);
     while request.len() < 4096 {

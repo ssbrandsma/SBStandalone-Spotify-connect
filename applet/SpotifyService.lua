@@ -12,6 +12,7 @@ module(...)
 oo.class(_M)
 
 local ROOT = "/usr/share/jive/applets/SpotifyConnect"
+local RUNTIME = "/dev/spotify-connect-runtime"
 local USER = "/etc/squeezeplay/userpath/SpotifyConnect"
 local FIFO = USER .. "/audio.fifo"
 local PID = USER .. "/librespot.pid"
@@ -24,6 +25,14 @@ local METADATA_LOADING = METADATA .. ".loading"
 local STREAM_MARKER = USER .. "/stream.ready"
 local LOG = USER .. "/engine.log"
 local function q(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+
+local function prepareRuntime()
+    local files = "librespot ogg-http-bridge spotify-metadata spotify-metadata-event spotify-supervisor"
+    local command = "rm -rf " .. q(RUNTIME) .. "; mkdir -p " .. q(RUNTIME) ..
+        " && for f in " .. files .. "; do cp " .. q(ROOT) .. "/$f " .. q(RUNTIME) .. "/$f || exit 1; done" ..
+        " && chmod 755 " .. q(RUNTIME) .. "/*"
+    return os.execute(command) == 0
+end
 
 function init(self, applet) self.applet = applet end
 function credentialsExist(self) return os.execute("test -s " .. q(USER .. "/credentials.json") .. " 2>/dev/null") == 0 end
@@ -100,21 +109,22 @@ function start(self, pairing)
     -- behind. Remove only processes owned by this applet before rebinding its
     -- fixed localhost port; otherwise every retry fails with EADDRINUSE.
     os.execute("for n in ogg-http-bridge librespot spotify-supervisor; do for p in `pidof $n 2>/dev/null`; do kill -KILL $p 2>/dev/null; done; done; rm -f " .. q(PID) .. " " .. q(BPID) .. " " .. q(FIFO))
+    if not prepareRuntime() then return false end
     os.execute("mkdir -p " .. q(USER) .. "; chmod 700 " .. q(USER) .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(STREAM_MARKER))
     os.execute("test -p " .. q(FIFO) .. " || mkfifo " .. q(FIFO) .. "; chmod 600 " .. q(FIFO))
-    os.execute("( exec 3<>" .. q(FIFO) .. "; exec " .. q(ROOT .. "/ogg-http-bridge") .. " 17880 --stream-marker " .. q(STREAM_MARKER) .. " --loading-marker " .. q(METADATA_LOADING) .. " <" .. q(FIFO) .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(BPID))
+    os.execute("( exec 3<>" .. q(FIFO) .. "; exec " .. q(RUNTIME .. "/ogg-http-bridge") .. " 17880 --stream-marker " .. q(STREAM_MARKER) .. " --loading-marker " .. q(METADATA_LOADING) .. " <" .. q(FIFO) .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(BPID))
     local auth = ""; if pairing or not self:credentialsExist() then auth = " --enable-device-auth" end
     local settings = self.applet._settings or {}
     local name = settings.deviceName or "Squeezebox Radio"
     if name == "Squeezebox Radio" then name = defaultName() end
-    local metadataCommand = ROOT .. "/spotify-metadata " .. METADATA
-    local cmd = "( exec " .. q(ROOT .. "/spotify-supervisor") .. " --status " .. q(STATUS) .. " -- " .. q(ROOT .. "/librespot") ..
+    local metadataCommand = RUNTIME .. "/spotify-metadata " .. METADATA
+    local cmd = "( exec " .. q(RUNTIME .. "/spotify-supervisor") .. " --status " .. q(STATUS) .. " -- " .. q(RUNTIME .. "/librespot") ..
         " --name " .. q(name) .. " --onevent " .. q(metadataCommand) .. " --backend pipe --device " .. q(FIFO) .. " --passthrough --disable-audio-cache --disable-discovery --system-cache " .. q(USER) .. " --bitrate 96" .. auth .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(PID)
     os.execute(cmd); return true
 end
 function stop(self)
     local cmd = "if test -s " .. q(PID) .. "; then kill -TERM `cat " .. q(PID) .. "` 2>/dev/null; fi; if test -s " .. q(BPID) .. "; then kill -TERM `cat " .. q(BPID) .. "` 2>/dev/null; fi; for n in ogg-http-bridge librespot spotify-supervisor; do for p in `pidof $n 2>/dev/null`; do kill -TERM $p 2>/dev/null; done; done; sleep 1; rm -f " .. q(PID) .. " " .. q(BPID) .. " " .. q(FIFO)
-    os.execute(cmd .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(STREAM_MARKER))
+    os.execute(cmd .. "; rm -rf " .. q(RUNTIME) .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(STREAM_MARKER))
 end
 function restart(self) self:stop(); Timer(400, function() self:start(false) end, true):start(); return true end
 function disconnect(self) self:stop(); os.execute("rm -f " .. q(USER .. "/credentials.json") .. " " .. q(USER .. "/volume")) end
