@@ -57,7 +57,9 @@ def test_playback_completion_requires_audio_drain_and_current_owner():
         package.loaded['loop.simple'] = {class=function() end}
         package.loaded['squeezeplay.stream'] = {}
         package.loaded['squeezeplay.decode'] = {resumeAudio=function() end}
-        pb = {stream={}, sentDecoderUnderrunEvent=true}
+        forwarded=0
+        pb = {stream={}, sentDecoderUnderrunEvent=true,
+              sendStatus=function() forwarded=forwarded+1; return true end}
         player = {playback=pb}
         package.loaded['jive.slim.Player'] = {getLocalPlayer=function() return player end}
     ''')
@@ -65,11 +67,19 @@ def test_playback_completion_requires_audio_drain_and_current_owner():
     playback = lua.globals().package.loaded['drain_playback']
     playback.init(playback, lua.table())
     playback.playback = lua.globals().pb
+    playback._watchDrain(playback)
     assert playback.hasDrained(playback) is False
     lua.globals().pb.stream = None
     assert playback.hasDrained(playback) is False  # Decoder EOF alone is insufficient.
-    lua.globals().pb.sentAudioUnderrunEvent = True
+    lua.globals().pb.sendStatus(lua.globals().pb, lua.table(), 'STMd')
+    assert playback.hasDrained(playback) is False
+    old_hook = lua.globals().pb.sendStatus
+    lua.globals().pb.sendStatus(lua.globals().pb, lua.table(), 'STMu')
+    # The firmware flag can reset before the next applet poll. The event
+    # must remain latched until this playback is replaced or stopped.
+    lua.globals().pb.sentAudioUnderrunEvent = False
     assert playback.hasDrained(playback) is True
+    assert lua.globals().forwarded == 2
     playback.paused = True
     assert playback.hasDrained(playback) is False
     playback.drainingToken = '123:0:1:22'
@@ -78,6 +88,11 @@ def test_playback_completion_requires_audio_drain_and_current_owner():
     playback.ownership = lua.eval('{canStart=function() return false end}')
     assert playback.hasDrained(playback) is False
     playback.ownership = None
+    playback._watchDrain(playback)  # A new activation fences late old events.
+    old_hook(lua.globals().pb, lua.table(), 'STMu')
+    assert playback.hasDrained(playback) is False
+    lua.globals().pb.sendStatus(lua.globals().pb, lua.table(), 'STMu')
+    assert playback.hasDrained(playback) is True
     lua.globals().player.playback = lua.table()
     assert playback.hasDrained(playback) is False
 

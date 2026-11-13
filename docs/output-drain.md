@@ -21,8 +21,12 @@ The bridge itself and the producer FIFO remain alive for the next track.
 
 The Lua watcher acknowledges only when the EOF marker matches the current
 stream, the request serial matches that stream, and the current playback owner
-reports `sentAudioUnderrunEvent` with no remaining network stream. Stock
-SqueezePlay sets that flag on STMu, after decoder underrun AND output underrun.
+has latched STMu with no remaining network stream. Stock SqueezePlay emits
+STMu after decoder underrun AND output underrun. Its `sentAudioUnderrunEvent`
+flag can clear on the following firmware tick, so polling that flag can miss
+completion and leave automatic advancement waiting indefinitely. The applet
+wraps `sendStatus` to latch STMu, forwards the original event unchanged, and
+resets/fences the latch on each playback activation and stop.
 Decoder completion (STMd) or an empty bridge queue alone is insufficient.
 Paused playback and playback owned by another source cannot acknowledge it.
 

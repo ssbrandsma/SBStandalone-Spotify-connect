@@ -115,7 +115,9 @@ function init(self)
         if d.drain and d.eos and d.eos == d.stream and not streamChanged
             and d.drain:match(":(%d+)$") == d.stream:match(":(%d+)$")
             and d.playback_state ~= "paused" and self.playback:hasDrained() then
-            self.service:acknowledgeDrain(d.drain)
+            if self.service:acknowledgeDrain(d.drain) then
+                Log.logger("SpotifyConnect"):info("audio output drained; acknowledged ", d.drain)
+            end
         end
         local stateChanged = d.playback_state and d.playback_state ~= self._lastPlaybackState
         if d.playback_state and d.playback_state ~= self._lastPlaybackState then

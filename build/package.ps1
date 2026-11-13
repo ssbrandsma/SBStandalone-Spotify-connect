@@ -95,7 +95,7 @@ $Xml = @"
     <applet name="SpotifyConnect" version="$(& $Escape $Version)" target="baby" minTarget="7.7" maxTarget="*">
       <title lang="EN">Spotify Connect</title>
       <desc lang="EN">Standalone Spotify Connect playback for Logitech Squeezebox Radio. LMS is only needed to install the applet.</desc>
-      <changes lang="EN">Preserve complete track endings with immediate manual skips; fix mobile song selection and native Now Playing updates; eliminate shell polling from the UI.</changes>
+      <changes lang="EN">Latch audio-completed events for reliable automatic track advancement; preserve complete endings and immediate manual skips; fix mobile selection and native Now Playing updates; remove UI shell polling.</changes>
       <creator>Sjoerd Brandsma</creator>
       <url>$(& $Escape $ZipUrl)</url>
       <sha>$ZipSha1</sha>
@@ -103,7 +103,7 @@ $Xml = @"
     <applet name="SpotifyConnect" version="$(& $Escape $Version)" target="fab4" minTarget="7.7" maxTarget="*">
       <title lang="EN">Spotify Connect</title>
       <desc lang="EN">Standalone Spotify Connect playback for Logitech Squeezebox Touch. LMS is only needed to install the applet.</desc>
-      <changes lang="EN">Preserve complete track endings with immediate manual skips; fix mobile song selection and native Now Playing updates; eliminate shell polling from the UI.</changes>
+      <changes lang="EN">Latch audio-completed events for reliable automatic track advancement; preserve complete endings and immediate manual skips; fix mobile selection and native Now Playing updates; remove UI shell polling.</changes>
       <creator>Sjoerd Brandsma</creator>
       <url>$(& $Escape $ZipUrl)</url>
       <sha>$ZipSha1</sha>

@@ -1,4 +1,5 @@
 local require = require
+local type = type
 local oo = require("loop.simple")
 local Player = require("jive.slim.Player")
 local decode = require("squeezeplay.decode")
@@ -13,6 +14,34 @@ function init(self, applet)
     self.applet = applet
     self.playback = nil
     self.paused = false
+end
+
+function _clearDrainWatch(self)
+    self.drainGeneration = (self.drainGeneration or 0) + 1
+    if self.drainPlayback and self.drainPlayback.sendStatus == self.drainHook then
+        self.drainPlayback.sendStatus = self.drainOriginal
+    end
+    self.drainPlayback, self.drainHook, self.drainOriginal = nil, nil, nil
+    self.outputDrained = false
+end
+
+function _watchDrain(self)
+    self:_clearDrainWatch()
+    local playback = self.playback
+    if not playback or type(playback.sendStatus) ~= "function" then return end
+    local original, generation = playback.sendStatus, self.drainGeneration
+    local hook = function(instance, status, event, ...)
+        -- STMu is the completed audio-output event; STMd only means decoding
+        -- finished. Latch it because the firmware clears its status flag on
+        -- a subsequent tick, possibly before our 250 ms watcher runs.
+        if event == "STMu" and instance == self.playback
+            and generation == self.drainGeneration then
+            self.outputDrained = true
+        end
+        return original(instance, status, event, ...)
+    end
+    self.drainPlayback, self.drainOriginal, self.drainHook = playback, original, hook
+    playback.sendStatus = hook
 end
 
 function start(self, host, port, path)
@@ -42,6 +71,7 @@ function start(self, host, port, path)
     self.playback.sentAudioUnderrunEvent = false
     self.playback.isLooping = false
     self.playback.ignoreStream = false
+    self:_watchDrain()
     Stream:icyMetaInterval(0)
     decode:start(string.byte('o'), 0, 0, 0, 0, 0, 0, 0, 0, 0)
     self.playback:_streamConnect(host, port)
@@ -66,6 +96,7 @@ end
 
 function stop(self)
     if self.ownership and not self.ownershipCleaning and not self.ownership:canStart() then return false end
+    self:_clearDrainWatch()
     if self.playback then self.playback:stopInternal(); self.playback = nil end
     self.paused = false
 end
@@ -75,9 +106,7 @@ function hasDrained(self)
     if self.ownership and not self.ownership:canStart() then return false end
     local player = Player:getLocalPlayer()
     if not player or player.playback ~= self.playback then return false end
-    -- Stock Playback sets this on STMu: network EOF, decoder underrun,
-    -- then audio output underrun. STMd alone is too early.
-    return not self.playback.stream and self.playback.sentAudioUnderrunEvent == true
+    return not self.playback.stream and self.outputDrained == true
 end
 
 function pause(self)
