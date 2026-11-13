@@ -1,3 +1,4 @@
+local require = require
 local oo = require("loop.simple")
 local Player = require("jive.slim.Player")
 local decode = require("squeezeplay.decode")
@@ -15,6 +16,7 @@ function init(self, applet)
 end
 
 function start(self, host, port, path)
+    if self.ownership and not self.ownership:canStart() then return false end
     local player = Player:getLocalPlayer() or Player:getCurrentPlayer()
     if not player then return false end
     self.playback = player.playback
@@ -33,6 +35,8 @@ function start(self, host, port, path)
     self.playback.decodeThreshold = 2048
     self.playback.sentResume = false
     self.playback.sentResumeDecoder = false
+    self.playback.sentDecoderUnderrunEvent = false
+    self.drainingToken = nil
     self.playback.sentDecoderFullEvent = false
     self.playback.sentOutputUnderrunEvent = false
     self.playback.sentAudioUnderrunEvent = false
@@ -46,6 +50,7 @@ function start(self, host, port, path)
 end
 
 function setRemoteVolume(self, percent)
+    if self.ownership and not self.ownership:canStart() then return false end
     self.remoteVolume = math.max(0, math.min(100, math.floor(percent)))
     if not self.playback then return false end
     local player = Player:getLocalPlayer()
@@ -60,11 +65,23 @@ function setRemoteVolume(self, percent)
 end
 
 function stop(self)
+    if self.ownership and not self.ownershipCleaning and not self.ownership:canStart() then return false end
     if self.playback then self.playback:stopInternal(); self.playback = nil end
     self.paused = false
 end
 
+function hasDrained(self)
+    if self.paused or not self.playback then return false end
+    if self.ownership and not self.ownership:canStart() then return false end
+    local player = Player:getLocalPlayer()
+    if not player or player.playback ~= self.playback then return false end
+    -- Stock Playback sets this on STMu: network EOF, decoder underrun,
+    -- then audio output underrun. STMd alone is too early.
+    return not self.playback.stream and self.playback.sentAudioUnderrunEvent == true
+end
+
 function pause(self)
+    if self.ownership and not self.ownership:canStart() then return false end
     if not self.playback then return false end
     local player = Player:getLocalPlayer()
     if not player or player.playback ~= self.playback then return false end
@@ -74,9 +91,11 @@ function pause(self)
 end
 
 function resume(self)
+    if self.ownership and not self.ownership:canStart() then return false end
     if not self.playback or not self.paused then return false end
     local player = Player:getLocalPlayer()
-    if not player or player.playback ~= self.playback or not self.playback.stream then
+    if not player or player.playback ~= self.playback
+        or (not self.playback.stream and not self.drainingToken) then
         self.paused = false
         return false
     end
@@ -85,4 +104,16 @@ function resume(self)
     self.playback.sentDecoderFullEvent = true
     self.paused = false
     return true
+end
+
+function configureOwnership(self,gate)
+    if self.ownership or self.playback then return false end
+    self.ownership=gate;return true
+end
+
+function createOwnership(self, options)
+    options=require("applets.StandaloneBase.OwnershipRuntime").options(options)
+    if not options then return nil end
+    options.playback=self
+    return require("applets.SpotifyConnect.SpotifyOwnership").new(options)
 end

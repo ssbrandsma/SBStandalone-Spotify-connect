@@ -18,3 +18,10 @@ support seek. A nonzero resume request restarts at offset zero.
 
 The bridge and applet are independent of StandaloneRadio. Numeric IPv4 loopback
 addresses bypass DNS because the Radio's resolver is unreliable for them.
+
+The presentation path is separate from audio: `spotify-metadata` atomically
+writes librespot events, `SpotifyStandaloneNowPlaying.lua` claims and updates
+StandaloneBase on `127.0.0.1:9000`, and StandaloneBase publishes LMS
+playerstatus/CometD to the stock Logitech Now Playing applet. API failure cannot
+stop or delay audio. `SpotifyNativeNowPlaying.lua` invokes the firmware's
+`goNowPlaying` service only for a new stream activation.

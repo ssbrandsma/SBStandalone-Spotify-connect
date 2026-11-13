@@ -1,8 +1,8 @@
 # SBSpotifyConnect
 
-Clean Spotify Connect applet project for the Logitech Squeezebox Radio (`baby`).
+Clean Spotify Connect applet project for the Logitech Squeezebox Radio (`baby`) and Touch (`fab4`).
 
-The `0.5.4` production release packages a Jive applet, the pinned Phase 7
+The `0.7.0` release packages a Jive applet, the pinned Phase 7
 streaming-only librespot engine, an owned local Ogg bridge, and a status
 supervisor. First use shows Spotify's device-authorization pairing URL; the
 supported librespot credential cache then allows automatic reconnect after
@@ -12,7 +12,9 @@ The production path is compressed audio throughout:
 
 `Spotify → stream-only librespot → Vorbis passthrough → bounded HTTP Ogg bridge → stock SqueezePlay/Tremor → jive_alsa → speaker`
 
-The Radio is ARM926EJ-S/ARMv5TEJ, soft-float, Linux 2.6.26. PCM decoding in
+Both hardware targets use a shared static ARMv5TE soft-float runtime with Linux
+2.6 compatibility wrappers. The Radio is ARM926EJ-S/ARMv5TEJ; the Touch
+also supports this instruction baseline. PCM decoding in
 librespot, direct ALSA, shared memory, effects FIFOs, and stock Playback patches
 are excluded because the research repository proved they are the wrong boundary.
 
@@ -23,9 +25,16 @@ The Applet Installer repository is published over plain HTTP for compatibility
 with the stock Radio firmware:
 `http://49.12.198.91/sbspotifyconnect/extensions.xml`.
 
-The Spotify Connect menu includes a manual **Now Playing** view. Librespot's
-existing player events provide the track title, artist, album, track ID,
-duration, playback state, and cover URL. Metadata is written by the small
-`spotify-metadata` helper and merged with the connection status by the Lua
-service. Artwork is requested once per track, with stale requests discarded;
-artwork failures never affect playback.
+Spotify playback uses the original Logitech Now Playing screen through
+StandaloneBase's loopback Now Playing API. Librespot remains authoritative for
+Spotify Connect and audio; the applet publishes its event-driven metadata,
+state, duration and position without polling the network. HTTPS cover URLs are
+passed through SBHttpsProxy. See [docs/standalonebase-now-playing.md](docs/standalonebase-now-playing.md)
+for lifecycle, source switching, limitations and device validation.
+
+Spotify services support Disabled, Manual, and Always On operating modes.
+Fresh installations default to Manual so librespot, its supervisor, and the
+Ogg bridge consume no resources until requested. See
+[docs/service-lifecycle.md](docs/service-lifecycle.md).
+
+Release 0.7.0 fixes natural track-end draining, manual list selection, and native Now Playing metadata updates. The UI watcher validates processes directly through `/proc` without spawning shell commands. Artwork is handled by StandaloneBase; the obsolete custom artwork and Now Playing implementations have been removed.

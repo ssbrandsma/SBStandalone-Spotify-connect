@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$HOME/.cargo/env"
-ROOT=/mnt/c/Projects/SBSpotifyConnect
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HARDWARE="${1:-all}"
+case "$HARDWARE" in
+    baby|fab4|all) ;;
+    *) echo "Usage: $0 [baby|fab4|all]" >&2; exit 2 ;;
+esac
+# Both i.MX CPUs run this baseline: ARMv5TE, EABI soft-float, static musl.
+# Keep the Linux 2.6 shim for the stock firmware on both models.
+echo "Building for $HARDWARE (shared baby/fab4 ARMv5TE soft-float runtime)"
 OUT="$ROOT/build/out"
 mkdir -p "$OUT"
+rm -f "$OUT/native-targets.json"
 arm-linux-gnueabi-gcc -c -Os -march=armv5te -mfloat-abi=soft -marm "$ROOT/native/linux26-compat/linux26-compat.c" -o /tmp/sbspotify-linux26-compat.o
 rustc --edition 2021 -C opt-level=z -C strip=symbols "$ROOT/native/bridge/bridge.rs" -o "$OUT/ogg-http-bridge-host"
 rustc --edition 2021 -C opt-level=z -C strip=symbols "$ROOT/native/supervisor/main.rs" -o "$OUT/spotify-supervisor-host"
@@ -23,3 +32,5 @@ export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 export CARGO_PROFILE_RELEASE_STRIP=symbols
 cargo rustc --locked --release --bin librespot --target armv5te-unknown-linux-musleabi --no-default-features --features rustls-tls-webpki-roots,with-libmdns,passthrough-decoder,streaming-only -- -C link-arg=/tmp/sbspotify-linux26-compat.o -C link-arg=-Wl,--wrap=epoll_create1,--wrap=eventfd,--wrap=socket,--wrap=accept4
 cp /tmp/sbspotify-librespot-target/armv5te-unknown-linux-musleabi/release/librespot "$OUT/librespot"
+
+printf '{"hardware":["baby","fab4"],"target":"armv5te-unknown-linux-musleabi","cpu":"arm926ej-s","floatAbi":"soft"}\n' > "$OUT/native-targets.json"

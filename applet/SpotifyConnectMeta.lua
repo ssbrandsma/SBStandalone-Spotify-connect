@@ -6,12 +6,18 @@ local Icon = require("jive.ui.Icon")
 local Label = require("jive.ui.Label")
 local Surface = require("jive.ui.Surface")
 local qrencode = require("applets.SpotifyConnect.qrencode")
-local pcall = pcall
+local pcall, ipairs = pcall, ipairs
 local Timer = require("jive.ui.Timer")
 local jiveMain = jiveMain
 local appletManager = appletManager
 local EVENT_WINDOW_POP = jive.ui.EVENT_WINDOW_POP
 local state = require("applets.SpotifyConnect.SpotifyConnectState")
+local okSystem, System = pcall(require, "jive.System")
+local modelName = "Squeezebox Radio"
+if okSystem then
+    local okMachine, machine = pcall(function() return System:getMachine() end)
+    if okMachine and machine == "fab4" then modelName = "Squeezebox Touch" end
+end
 module(...)
 oo.class(_M, AppletMeta)
 function jiveVersion() return 1, 1 end
@@ -48,7 +54,7 @@ local function showPairing(self, applet)
             local surface = makeQrSurface(d.url)
             if surface then qr:setValue(surface) end
         end
-        label:setValue(d.state == "pairing" and ("Scan QR or open this address:\n" .. (d.url or "waiting") .. "\n\nWaiting for approval...") or (d.state == "connected" and "Connected\n\nSelect Squeezebox Radio in Spotify." or (d.state == "error" and ("Connection failed\n\n" .. (d.message or "Unknown error") .. "\n\nPress Back and try Connect again.") or "Waiting for Spotify...")))
+        label:setValue(d.state == "pairing" and ("Scan QR or open this address:\n" .. (d.url or "waiting") .. "\n\nWaiting for approval...") or (d.state == "connected" and ("Connected\n\nSelect " .. modelName .. " in Spotify.") or (d.state == "error" and ("Connection failed\n\n" .. (d.message or "Unknown error") .. "\n\nPress Back and try Connect again.") or "Waiting for Spotify...")))
         if d.state == "connected" then
             local settings = applet._settings; settings.enabled = true
             self:storeSettings()
@@ -70,30 +76,40 @@ function registerApplet(self)
         if not applet or not service then return end
         local window = Window("text_list", "Spotify Connect")
         local menu = SimpleMenu("menu"); window:addWidget(menu)
-        local state = service:status()
-        menu:addItem({ text = "Now Playing", callback = function() applet.nowPlaying:show() end })
-        if state == "not_connected" or state == "error" then
-            menu:addItem({ text = "Connect", callback = function() service:start(true); showPairing(self, applet) end })
+        local modeNames = {disabled="Disabled", manual="Manual", always_on="Always On"}
+        local function selectMode()
+            local modeWindow=Window("text_list","Operating Mode"); local modeMenu=SimpleMenu("menu"); modeWindow:addWidget(modeMenu)
+            for _,mode in ipairs({"disabled","manual","always_on"}) do
+                local selected=mode
+                modeMenu:addItem({text=modeNames[selected] .. (service:getMode()==selected and " *" or ""),callback=function()
+                    service:setMode(selected); self:storeSettings(); modeWindow:hide()
+                end})
+            end
+            modeWindow:show()
         end
-        local statusItem = { text = "Status: " .. state, callback = function() showPairing(self, applet) end }
-        menu:addItem(statusItem)
-        local statusTimer = Timer(1000, function() menu:setText(statusItem, "Status: " .. service:status()) end)
-        statusTimer:start()
-        window:addListener(EVENT_WINDOW_POP, function() statusTimer:stop() end)
-        menu:addItem({ text = "Device name: " .. ((applet._settings and applet._settings.deviceName) or "Squeezebox Radio") })
-        menu:addItem({ text = "Restart service", callback = function() service:restart() end })
-        local disconnectItem
-        disconnectItem = { text = "Disconnect account", callback = function()
-            service:disconnect()
-            local settings = applet._settings; settings.enabled = false; self:storeSettings()
-            menu:setText(disconnectItem, "Disconnected")
-            menu:setText(statusItem, "Status: not_connected")
-            Timer(2500, function() menu:setText(disconnectItem, "Disconnect account") end, true):start()
-        end }
-        menu:addItem(disconnectItem)
+        local modeItem={text="Operating Mode: " .. modeNames[service:getMode()],callback=selectMode}; menu:addItem(modeItem)
+        local statusItem={text="State: " .. service:getStatus(),callback=function() showPairing(self,applet) end}; menu:addItem(statusItem)
+        local mode=service:getMode()
+        if mode~="disabled" and not service:credentialsExist() then menu:addItem({text="Connect account",callback=function() if service:start(true) then showPairing(self,applet) end end}) end
+        if mode=="manual" and not service:isRunning() then menu:addItem({text="Start Spotify Connect",callback=function() service:start(false) end}) end
+        if mode=="manual" and service:isRunning() then menu:addItem({text="Stop Spotify Connect",callback=function() service:stop(false) end}) end
+        if mode~="disabled" and service:isRunning() then menu:addItem({text="Restart Spotify Connect",callback=function() service:restart() end}) end
+        menu:addItem({text="Device: " .. ((applet._settings and applet._settings.deviceName) or modelName)})
+        if service:getLastError() then menu:addItem({text="Last error: " .. service:getLastError()}) end
+        menu:addItem({text="Disconnect account",callback=function() service:disconnect(); self:storeSettings() end})
+        local statusTimer=Timer(2000,function()
+            menu:setText(statusItem,"State: " .. service:getStatus())
+            menu:setText(modeItem,"Operating Mode: " .. modeNames[service:getMode()])
+        end); statusTimer:start(); window:addListener(EVENT_WINDOW_POP,function() statusTimer:stop() end)
         window:show()
     end, 1))
 end
-function defaultSettings() return { enabled = false, deviceName = "Squeezebox Radio" } end
-function upgradeSettings(_, settings) settings = settings or {}; if settings.deviceName == nil then settings.deviceName = "Squeezebox Radio" end; if settings.enabled == nil then settings.enabled = false end; return settings end
+function defaultSettings() return {enabled=false,deviceName=modelName,serviceMode="manual",serviceModeExplicit=true} end
+function upgradeSettings(_, settings)
+    settings=settings or {}; if settings.deviceName==nil then settings.deviceName=modelName end
+    if settings.enabled==nil then settings.enabled=false end
+    if settings.serviceMode==nil then settings.serviceMode=settings.enabled and "always_on" or "manual"; settings.serviceModeExplicit=false end
+    return settings
+end
 function configureApplet() end
+return _M

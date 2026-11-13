@@ -135,15 +135,55 @@ impl TryFrom<SkipTo> for PlayingTrack {
     fn try_from(value: SkipTo) -> Result<Self, Self::Error> {
         // order of checks is important, as the index can be 0, but still has an uid or uri provided,
         // so we only use the index as last resort
-        if let Some(uri) = value.track_uri {
+        // Mobile clients can send an empty URI alongside a real track UID.
+        // Treat empty identifiers as absent rather than selecting URI "" and
+        // silently falling back to the first track in the context.
+        if let Some(uri) = value.track_uri.filter(|uri| !uri.is_empty()) {
             Ok(PlayingTrack::Uri(uri))
-        } else if let Some(uid) = value.track_uid {
+        } else if let Some(uid) = value.track_uid.filter(|uid| !uid.is_empty()) {
             Ok(PlayingTrack::Uid(uid))
         } else if let Some(index) = value.track_index {
             Ok(PlayingTrack::Index(index))
         } else {
             Err(())
         }
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    #[test]
+    fn mobile_empty_uri_uses_track_uid_before_index() {
+        let selected = PlayingTrack::try_from(SkipTo {
+            track_uri: Some(String::new()),
+            track_uid: Some("selected-row".into()),
+            track_index: Some(0),
+        }).unwrap();
+        assert!(matches!(selected, PlayingTrack::Uid(uid) if uid == "selected-row"));
+    }
+
+    #[test]
+    fn empty_identifiers_fall_back_to_index_or_no_selection() {
+        let selected = PlayingTrack::try_from(SkipTo {
+            track_uri: Some(String::new()), track_uid: Some(String::new()),
+            track_index: Some(7),
+        }).unwrap();
+        assert!(matches!(selected, PlayingTrack::Index(7)));
+        assert!(PlayingTrack::try_from(SkipTo {
+            track_uri: Some(String::new()), track_uid: Some(String::new()),
+            track_index: None,
+        }).is_err());
+    }
+
+    #[test]
+    fn nonempty_uri_keeps_priority_over_uid_and_index() {
+        let selected = PlayingTrack::try_from(SkipTo {
+            track_uri: Some("spotify:track:selected".into()),
+            track_uid: Some("row".into()), track_index: Some(0),
+        }).unwrap();
+        assert!(matches!(selected, PlayingTrack::Uri(uri) if uri == "spotify:track:selected"));
     }
 }
 

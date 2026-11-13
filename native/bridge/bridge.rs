@@ -133,6 +133,12 @@ fn read_marker(path: &Path) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn eos_marker(path: &Path) -> PathBuf {
+    let mut value = path.as_os_str().to_owned();
+    value.push(".eos");
+    value.into()
+}
+
 fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let port = args.first().filter(|s| !s.starts_with("--")).cloned().unwrap_or_else(|| "17880".into());
@@ -161,12 +167,16 @@ fn main() -> io::Result<()> {
     let mut timeline: Option<(Instant, u64)> = None;
     let mut generation = 0u64;
     let mut last_loading: Option<String> = None;
+    let mut last_marker_poll = Instant::now() - Duration::from_millis(250);
     let mut discard_until_bos = false;
     loop {
+        if last_marker_poll.elapsed() >= Duration::from_millis(250) {
+            last_marker_poll = Instant::now();
         if let Some(loading) = loading_marker.as_deref().and_then(read_marker) {
             if last_loading.as_deref() != Some(loading.as_str()) {
                 eprintln!("[BRIDGE] loading {loading}; discarding queued previous stream");
                 last_loading = Some(loading);
+                if let Some(path) = marker.as_deref() { let _ = fs::remove_file(eos_marker(path)); }
                 discard_until_bos = true;
                 pending = None;
                 offset = 0;
@@ -175,6 +185,7 @@ fn main() -> io::Result<()> {
                     eprintln!("[BRIDGE] loading marker closed previous client");
                 }
             }
+        }
         }
         if client.is_none() {
             match listener.accept() {
@@ -196,11 +207,11 @@ fn main() -> io::Result<()> {
         // Hold the next audio page until a client arrives. This preserves a
         // complete start for a late first client, with bounded backpressure.
         if pending.is_some() && client.is_none() && !discard_until_bos {
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(250));
             continue;
         }
         if pending.is_none() {
-            match rx.recv_timeout(Duration::from_millis(100)) {
+            match rx.recv_timeout(Duration::from_millis(250)) {
                 Ok(Ok(Some(p))) => {
                     let is_bos = p[5] & 2 != 0;
                     if discard_until_bos && !is_bos {
@@ -208,6 +219,7 @@ fn main() -> io::Result<()> {
                     }
                     if is_bos {
                         discard_until_bos = false;
+                        if let Some(path) = marker.as_deref() { let _ = fs::remove_file(eos_marker(path)); }
                     }
                     let is_header = p[5] & 2 != 0 || headers.packets < 3;
                     if p[5] & 2 != 0 {
@@ -263,7 +275,19 @@ fn main() -> io::Result<()> {
                 Ok(n) if n > 0 => {
                     offset += n;
                     forwarded += n as u64;
-                    if offset == p.len() { pending = None; offset = 0; }
+                    if offset == p.len() {
+                        if p[5] & 4 != 0 {
+                            // End the HTTP response only after all EOS bytes.
+                            // The decoder/output still need to drain afterward.
+                            if let (Some(path), Some(serial)) = (marker.as_deref(), headers.serial) {
+                                write_marker(&eos_marker(path), generation, serial)?;
+                            }
+                            client = None;
+                            eprintln!("[BRIDGE] EOS forwarded; waiting for output drain");
+                        }
+                        pending = None;
+                        offset = 0;
+                    }
                 }
                 Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => (),
                 result => {

@@ -93,6 +93,11 @@ struct PlayerInternal {
     player_id: usize,
     play_request_id_generator: SeqGenerator<u64>,
     last_progress_update: Instant,
+    drain_gate: Option<crate::drain::DrainGate>,
+    pending_end: Option<PlayerEvent>,
+    drain_poll: Option<Pin<Box<tokio::time::Sleep>>>,
+    drain_paused: bool,
+    stream_serial: Option<u32>,
 
     local_file_lookup: Arc<LocalFileLookup>,
 }
@@ -505,6 +510,13 @@ impl Player {
 
             let internal = PlayerInternal {
                 session,
+                drain_gate: if cfg!(feature = "streaming-only") && config.passthrough {
+                    crate::drain::DrainGate::from_env()
+                } else { None },
+                pending_end: None,
+                drain_poll: None,
+                drain_paused: false,
+                stream_serial: None,
                 config,
                 commands: cmd_rx,
                 load_handles: Arc::new(Mutex::new(HashMap::new())),
@@ -1645,6 +1657,23 @@ impl Future for PlayerInternal {
                 }
             }
 
+            // Never block the command receiver while the speaker drains. In
+            // particular Load/Stop must cancel this EOF before processing ack.
+            if self.pending_end.is_some() && !self.drain_paused && all_futures_completed_or_not_ready {
+                if self.drain_gate.as_ref().is_some_and(|gate| gate.acknowledged()) {
+                    let event = self.pending_end.take().unwrap();
+                    self.cancel_drain();
+                    self.send_event(event);
+                } else {
+                    let timer = self.drain_poll.get_or_insert_with(|| {
+                        Box::pin(tokio::time::sleep(Duration::from_millis(100)))
+                    });
+                    if timer.as_mut().poll(cx).is_ready() {
+                        self.drain_poll = None;
+                        cx.waker().wake_by_ref();
+                    }
+                }
+            }
             if (!self.state.is_playing()) && all_futures_completed_or_not_ready {
                 return Poll::Pending;
             }
@@ -1653,6 +1682,29 @@ impl Future for PlayerInternal {
 }
 
 impl PlayerInternal {
+    fn cancel_drain(&mut self) {
+        self.pending_end = None;
+        self.drain_poll = None;
+        self.drain_paused = false;
+        if let Some(gate) = &mut self.drain_gate { gate.cancel(); }
+    }
+
+    fn set_drain_paused(&mut self, paused: bool) -> bool {
+        if self.pending_end.is_none() { return false; }
+        self.drain_paused = paused;
+        if let PlayerState::EndOfTrack { track_id, play_request_id, loaded_track } = &self.state {
+            let event = if paused {
+                PlayerEvent::Paused { track_id: track_id.clone(), play_request_id: *play_request_id,
+                    position_ms: loaded_track.stream_position_ms }
+            } else {
+                PlayerEvent::Playing { track_id: track_id.clone(), play_request_id: *play_request_id,
+                    position_ms: loaded_track.stream_position_ms }
+            };
+            self.send_event(event);
+        }
+        true
+    }
+
     fn ensure_sink_running(&mut self) {
         if self.sink_status != SinkStatus::Running {
             trace!("== Starting sink ==");
@@ -1742,6 +1794,7 @@ impl PlayerInternal {
     }
 
     fn handle_play(&mut self) {
+        if self.set_drain_paused(false) { return; }
         match self.state {
             PlayerState::Paused {
                 ref track_id,
@@ -1770,6 +1823,7 @@ impl PlayerInternal {
     }
 
     fn handle_pause(&mut self) {
+        if self.set_drain_paused(true) { return; }
         match self.state {
             PlayerState::Paused { .. } => self.ensure_sink_stopped(false),
             PlayerState::Playing {
@@ -1806,6 +1860,11 @@ impl PlayerInternal {
     ) {
         match packet {
             Some((_, mut packet)) => {
+                if let AudioPacket::Raw(bytes) = &packet {
+                    if bytes.len() >= 27 && &bytes[..4] == b"OggS" && bytes[5] & 2 != 0 {
+                        self.stream_serial = Some(u32::from_le_bytes(bytes[14..18].try_into().unwrap()));
+                    }
+                }
                 if !packet.is_empty() {
                     if let AudioPacket::Samples(ref mut data) = packet {
                         // Get the volume for the packet. In the case of hardware volume control
@@ -1915,10 +1974,22 @@ impl PlayerInternal {
                     ..
                 } = self.state
                 {
-                    self.send_event(PlayerEvent::EndOfTrack {
+                    let event = PlayerEvent::EndOfTrack {
                         track_id: track_id.clone(),
                         play_request_id,
-                    })
+                    };
+                    if let Some(gate) = &mut self.drain_gate {
+                        let token = format!("{}:{}:{}:{}", std::process::id(), self.player_id,
+                            play_request_id, self.stream_serial.unwrap_or(0));
+                        match gate.begin(token) {
+                            Ok(()) => self.pending_end = Some(event),
+                            // Fail closed: never truncate buffered audio because
+                            // the output acknowledgement channel failed.
+                            Err(e) => error!("Cannot request output drain: {e}; manual skip remains available"),
+                        }
+                    } else {
+                        self.send_event(event);
+                    }
                 } else {
                     error!("PlayerInternal handle_packet: Invalid PlayerState");
                     exit(1);
@@ -2054,7 +2125,8 @@ impl PlayerInternal {
             ..
         } = &self.state
         {
-            if *previous_track_id == track_id {
+            // Streaming-only readers cannot rewind an exhausted decoder.
+            if *previous_track_id == track_id && !cfg!(feature = "streaming-only") {
                 let mut loaded_track = match mem::replace(&mut self.state, PlayerState::Invalid) {
                     PlayerState::EndOfTrack { loaded_track, .. } => loaded_track,
                     _ => {
@@ -2351,6 +2423,9 @@ impl PlayerInternal {
 
     fn handle_command(&mut self, cmd: PlayerCommand) -> PlayerResult {
         debug!("command={cmd:?}");
+        if matches!(&cmd, PlayerCommand::Load { .. } | PlayerCommand::Stop) {
+            self.cancel_drain();
+        }
         match cmd {
             PlayerCommand::Load {
                 track_id,

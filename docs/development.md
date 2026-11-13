@@ -1,12 +1,23 @@
 # Development
 
 The research source and evidence remain in `C:\Projects\Squeezify`; this tree
-contains only production-facing source. Target hardware is the Logitech
-Squeezebox Radio (`baby`) using ARMv5TEJ soft-float and Linux 2.6.26.
+contains production-facing source for Squeezebox Radio (`baby`) and Touch (`fab4`).
+The Radio uses ARM926EJ-S (ARMv5TEJ); the Touch uses ARM1136 (ARMv6TEJ).
+Both use the shared `armv5te-unknown-linux-musleabi` static soft-float runtime.
+The ARM926EJ-S instruction baseline supports both CPUs. Linux 2.6 compatibility
+wrappers are retained for stock firmware; no hard-float libraries are required.
 
-Build the host bridge with Rust, then cross-build the ARM helper with the
-`armv5te-unknown-linux-musleabi` target and the Linux 2.6 compatibility shim.
-The initial framework has no Spotify credentials and no account pairing.
+From PowerShell, with WSL Ubuntu-24.04, Rust and arm-linux-gnueabi-gcc installed:
 
-The initial framework test source is `http://live.chbnradio.org:8000/chbn.ogg`.
-The bridge also accepts `--source URL` or `TEST_OGG_URL` for later test streams.
+```powershell
+./build/build-native.ps1 -Hardware fab4
+./build/package.ps1
+```
+
+`-Hardware baby`, `-Hardware fab4`, and `-Hardware all` (default) build the same
+compatible runtime. The checkout path is resolved automatically. Native builds
+write `build/out/native-targets.json`; staging checks it before packaging.
+Host helper binaries are built for local validation and excluded from the ZIP.
+The package advertises both targets and can be installed on either model.
+
+Run regression checks with `python -m pytest tests`.

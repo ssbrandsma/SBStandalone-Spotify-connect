@@ -1,4 +1,13 @@
+[CmdletBinding()]
+param([ValidateSet('baby', 'fab4', 'all')][string]$Hardware = 'all')
 $ErrorActionPreference = 'Stop'
+$ManifestPath = Join-Path $PSScriptRoot 'out/native-targets.json'
+if (-not (Test-Path -LiteralPath $ManifestPath)) { throw 'Run build-native.ps1 before staging the applet' }
+$Manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+$Targets = if ($Hardware -eq 'all') { @('baby', 'fab4') } else { @($Hardware) }
+foreach ($Target in $Targets) {
+    if ($Target -notin $Manifest.hardware) { throw "Native runtime does not support $Target" }
+}
 $Root = Split-Path $PSScriptRoot -Parent
 $Out = Join-Path $PSScriptRoot 'out/applet/SpotifyConnect'
 if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Recurse -Force }

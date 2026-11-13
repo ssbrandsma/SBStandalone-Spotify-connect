@@ -8,8 +8,13 @@ The archive contains only the applet Lua, strings, artwork, event hook, and
 four ARM runtime executables. Credentials, research evidence, test binaries,
 PC artifacts, and source checkouts are excluded.
 
+Run `./build/build-native.ps1 -Hardware fab4` (or `baby` / `all`) before
+`./build/package.ps1`. Staging validates the native hardware manifest.
+
 The repository advertises the same package for the Squeezebox Radio (`baby`)
-and Squeezebox Touch (`fab4`) targets.
+and Squeezebox Touch (`fab4`) targets. The applet detects the firmware machine
+identifier and uses the matching default Spotify device name. Custom names
+are preserved.
 
 By default, package URLs point to
 `http://49.12.198.91/sbspotifyconnect`. Publish both `extensions.xml` and the
@@ -18,11 +23,11 @@ Radio can download them without TLS. Pass `-BaseUrl` when publishing through a
 different static web directory.
 
 Add `http://49.12.198.91/sbspotifyconnect/extensions.xml` to LMS under **Additional
-Repositories**. The two public files for version 0.5.4 are:
+Repositories**. The two public files for version 0.7.0 are:
 
 ```text
 http://49.12.198.91/sbspotifyconnect/extensions.xml
-http://49.12.198.91/sbspotifyconnect/SpotifyConnect-0.5.4.zip
+http://49.12.198.91/sbspotifyconnect/SpotifyConnect-0.7.0.zip
 ```
 
 Applet-owned executables install under

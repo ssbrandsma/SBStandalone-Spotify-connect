@@ -1,131 +1,215 @@
+local ipairs, type = ipairs, type
 local oo = require("loop.simple")
 local Timer = require("jive.ui.Timer")
-local os = require("os")
-local io = require("io")
-local pcall = pcall
-local type = type
-local tonumber = tonumber
+local os, io = require("os"), require("io")
+local pcall, type, tonumber, tostring = pcall, type, tonumber, tostring
 local okJson, json = pcall(require, "json")
 if not okJson then json = nil end
-
+local okSystem, System = pcall(require, "jive.System")
+local modelName = "Squeezebox Radio"
+if okSystem then
+    local okMachine, machine = pcall(function() return System:getMachine() end)
+    if okMachine and machine == "fab4" then modelName = "Squeezebox Touch" end
+end
 module(...)
 oo.class(_M)
 
 local ROOT = "/usr/share/jive/applets/SpotifyConnect"
 local RUNTIME = "/dev/spotify-connect-runtime"
 local USER = "/etc/squeezeplay/userpath/SpotifyConnect"
-local FIFO = USER .. "/audio.fifo"
-local PID = USER .. "/librespot.pid"
-local BPID = USER .. "/bridge.pid"
-local STATUS = USER .. "/status.json"
-local METADATA = USER .. "/metadata.json"
-local METADATA_STATE = METADATA .. ".state"
-local METADATA_VOLUME = METADATA .. ".volume"
-local METADATA_LOADING = METADATA .. ".loading"
-local STREAM_MARKER = USER .. "/stream.ready"
-local LOG = USER .. "/engine.log"
-local function q(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
-
-local function prepareRuntime()
-    local files = "librespot ogg-http-bridge spotify-metadata spotify-metadata-event spotify-supervisor"
-    local command = "rm -rf " .. q(RUNTIME) .. "; mkdir -p " .. q(RUNTIME) ..
-        " && for f in " .. files .. "; do cp " .. q(ROOT) .. "/$f " .. q(RUNTIME) .. "/$f || exit 1; done" ..
-        " && chmod 755 " .. q(RUNTIME) .. "/*"
-    return os.execute(command) == 0
-end
-
-function init(self, applet) self.applet = applet end
-function credentialsExist(self) return os.execute("test -s " .. q(USER .. "/credentials.json") .. " 2>/dev/null") == 0 end
-function isRunning(self)
-    return os.execute("test -s " .. q(PID) .. " && p=`cat " .. q(PID) .. "` && kill -0 $p 2>/dev/null && tr '\\000' ' ' < /proc/$p/cmdline 2>/dev/null | grep -q spotify-supervisor") == 0
-end
-function status(self)
-    if not self:isRunning() then return "not_connected" end
-    local f = io.open(STATUS, "r"); if not f then return "not_connected" end
-    local s = f:read("*a"); f:close(); return s:match('"state":"([^"]+)"') or "starting"
-end
-function statusData(self)
-    local d = { state = "not_connected" }
-    local f = io.open(STATUS, "r")
-    if f then
-        local s = f:read("*a"); f:close()
-        d.state = s:match('"state":"([^"]+)"') or d.state
-        d.url, d.message = s:match('"url":"([^"]+)"'), s:match('"message":"([^"]+)"')
-    end
-    local m = io.open(METADATA, "r")
-    if m then
-        local ms = m:read("*a"); m:close()
-        local ok, parsed = pcall(function() return json.decode(ms) end)
-        if ok and type(parsed) == "table" then
-            d.playback_state, d.track_id = parsed.playback_state, parsed.track_id
-            d.title, d.artist, d.album = parsed.title, parsed.artist, parsed.album
-            d.duration_ms, d.artwork_url = parsed.duration_ms, parsed.artwork_url
-        else
-            -- Keep the display useful on firmware without the JSON module.
-            d.playback_state = ms:match('"playback_state":"([^"]*)"')
-            d.track_id = ms:match('"track_id":"([^"]*)"')
-            d.title = ms:match('"title":"([^"]*)"')
-            d.artist = ms:match('"artist":"([^"]*)"')
-            d.album = ms:match('"album":"([^"]*)"')
-            d.duration_ms = ms:match('"duration_ms":"([^"]*)"')
-            d.artwork_url = ms:match('"artwork_url":"([^"]*)"')
-        end
-    end
-    local st = io.open(METADATA_STATE, "r")
-    if st then d.playback_state = st:read("*a"):gsub("%s", ""); st:close() end
-    local vf = io.open(METADATA_VOLUME, "r")
-    if vf then d.volume = tonumber(vf:read("*a")); vf:close() end
-    return d
-end
+local FIFO, PID, BPID = USER .. "/audio.fifo", USER .. "/supervisor.pid", USER .. "/bridge.pid"
+local CPID, STATUS = USER .. "/librespot.pid", USER .. "/status.json"
+local METADATA, STREAM_MARKER, LOG = USER .. "/metadata.json", USER .. "/stream.ready", USER .. "/engine.log"
+local METADATA_STATE, METADATA_VOLUME = METADATA .. ".state", METADATA .. ".volume"
+local METADATA_LOADING, METADATA_POSITION = METADATA .. ".loading", METADATA .. ".position"
+local DRAIN = USER .. "/output.drain"
+local MODES = { disabled=true, manual=true, always_on=true }
+local function q(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 local function readSmall(path)
-    local f = io.open(path, "r")
-    if not f then return nil end
-    local value = f:read("*a"); f:close()
-    if not value then return nil end
-    return (value:gsub("%s+$", ""))
+    local f=io.open(path,"r"); if not f then return nil end
+    local value=f:read("*a"); f:close(); if not value then return nil end
+    return (value:gsub("%s+$",""))
 end
--- Read only the tiny files written by native event producers. This method is
--- called frequently, so it deliberately avoids process creation and JSON.
-function eventData(self)
-    return {
-        loading = readSmall(METADATA_LOADING),
-        stream = readSmall(STREAM_MARKER),
-        playback_state = readSmall(METADATA_STATE),
-        volume = tonumber(readSmall(METADATA_VOLUME)),
-    }
+local function owned(pidfile, executable)
+    -- Called by the 250 ms UI watcher. Forking cat/tr/grep here can take
+    -- longer than that interval on a Radio and starve HTTP/display tasks.
+    local pid = readSmall(pidfile)
+    if not pid or not pid:match("^[1-9]%d*$") then return false end
+    local cmdline = readSmall("/proc/" .. pid .. "/cmdline")
+    if not cmdline then return false end
+    local command = cmdline:match("^([^%z]+)%z")
+    return command == RUNTIME .. "/" .. executable
+end
+local function signalOwned(pidfile, executable, signal)
+    os.execute("if test -s " .. q(pidfile) .. "; then p=`cat " .. q(pidfile) .. "`; " ..
+        "if test -r /proc/$p/cmdline && tr '\\000' ' ' < /proc/$p/cmdline | grep -F -q " .. q(RUNTIME .. "/" .. executable) ..
+        "; then kill -" .. signal .. " $p 2>/dev/null; fi; fi")
+end
+local function cleanupRuntime()
+    os.execute("rm -rf " .. q(RUNTIME) .. "; rm -f " .. q(PID) .. " " .. q(BPID) .. " " .. q(CPID) .. " " .. q(FIFO) ..
+        " " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) ..
+        " " .. q(METADATA_LOADING) .. " " .. q(METADATA_POSITION) .. " " .. q(STREAM_MARKER) ..
+        " " .. q(STREAM_MARKER .. ".eos") .. " " .. q(DRAIN) .. " " .. q(DRAIN .. ".ack"))
+end
+local function prepareRuntime()
+    local files="librespot ogg-http-bridge spotify-metadata spotify-metadata-event spotify-supervisor"
+    local command="rm -rf " .. q(RUNTIME) .. "; mkdir -p " .. q(RUNTIME) ..
+        " && for f in " .. files .. "; do test -x " .. q(ROOT) .. "/$f && cp " .. q(ROOT) .. "/$f " .. q(RUNTIME) .. "/$f || exit 1; done" ..
+        " && chmod 755 " .. q(RUNTIME) .. "/*"
+    return os.execute(command)==0
 end
 local function defaultName()
-    local f = io.open("/sys/class/net/eth1/address", "r") or
-        io.open("/sys/class/net/wlan0/address", "r") or
-        io.open("/sys/class/net/eth0/address", "r")
-    if not f then return "Squeezebox Radio" end
-    local mac = f:read("*a"); f:close(); mac = mac:gsub("%s", "")
-    if #mac >= 2 then return "Squeezebox Radio-" .. mac:sub(-2):upper() end
-    return "Squeezebox Radio"
+    local f=io.open("/sys/class/net/eth1/address","r") or io.open("/sys/class/net/wlan0/address","r") or io.open("/sys/class/net/eth0/address","r")
+    if not f then return modelName end
+    local mac=f:read("*a"); f:close(); mac=mac:gsub("%s","")
+    return #mac>=2 and ((modelName .. "-") .. mac:sub(-2):upper()) or modelName
+end
+
+function init(self, applet)
+    self.applet=applet; self.desiredRunning=false; self.lifecycleState="stopped"; self.lastError=nil; self.operation=0
+end
+function getMode(self)
+    local mode=self.applet and self.applet._settings and self.applet._settings.serviceMode
+    return MODES[mode] and mode or "manual"
+end
+function setMode(self, mode)
+    if not MODES[mode] then self.lastError="Invalid operating mode"; return false end
+    local settings=self.applet._settings or {}; self.applet._settings=settings
+    settings.serviceMode, settings.serviceModeExplicit = mode, true
+    if self.applet.storeSettings then pcall(function() self.applet:storeSettings() end) end
+    if mode=="disabled" then self:stop(true)
+    elseif mode=="always_on" then self:start(false) end
+    return true
+end
+function credentialsExist(self) return os.execute("test -s " .. q(USER .. "/credentials.json") .. " 2>/dev/null")==0 end
+function isRunning(self) return owned(PID,"spotify-supervisor") end
+function _bridgeRunning(self) return owned(BPID,"ogg-http-bridge") end
+function getStatus(self)
+    if self.lifecycleState=="starting" or self.lifecycleState=="stopping" then return self.lifecycleState end
+    if self:isRunning() and self:_bridgeRunning() then
+        local raw=readSmall(STATUS) or ""; local state=raw:match('"state":"([^"]+)"')
+        if state=="error" then return "error" end
+        if state=="starting" or state=="recovering" then return state end
+        return "running"
+    end
+    return self.lastError and "error" or "stopped"
+end
+function getLastError(self) return self.lastError end
+function status(self)
+    local value=self:getStatus()
+    if value=="stopped" then return "not_connected" end
+    if value=="running" then
+        local raw=readSmall(STATUS) or ""; return raw:match('"state":"([^"]+)"') or "starting"
+    end
+    return value
+end
+function statusData(self)
+    local d={state=self:status()}; local s=readSmall(STATUS)
+    if s then d.state=s:match('"state":"([^"]+)"') or d.state; d.url,d.message=s:match('"url":"([^"]+)"'),s:match('"message":"([^"]+)"') end
+    local m=io.open(METADATA,"r")
+    if m then
+        local ms=m:read("*a"); m:close(); local ok,parsed=pcall(function() return json.decode(ms) end)
+        if ok and type(parsed)=="table" then d.playback_state,d.track_id=parsed.playback_state,parsed.track_id; d.title,d.artist,d.album=parsed.title,parsed.artist,parsed.album; d.duration_ms,d.artwork_url=parsed.duration_ms,parsed.artwork_url
+        else d.playback_state=ms:match('"playback_state":"([^"]*)"'); d.track_id=ms:match('"track_id":"([^"]*)"'); d.title=ms:match('"title":"([^"]*)"'); d.artist=ms:match('"artist":"([^"]*)"'); d.album=ms:match('"album":"([^"]*)"'); d.duration_ms=ms:match('"duration_ms":"([^"]*)"'); d.artwork_url=ms:match('"artwork_url":"([^"]*)"') end
+    end
+    d.playback_state=readSmall(METADATA_STATE) or d.playback_state; d.volume=tonumber(readSmall(METADATA_VOLUME))
+    local value=readSmall(METADATA_POSITION); if value then local id,pos=value:match("([^\n]*)\n(%d+)"); if id==d.track_id then d.position_ms=tonumber(pos) end end
+    return d
+end
+function eventData(self) return {loading=readSmall(METADATA_LOADING),stream=readSmall(STREAM_MARKER),playback_state=readSmall(METADATA_STATE),volume=tonumber(readSmall(METADATA_VOLUME)),position=readSmall(METADATA_POSITION),metadata=readSmall(METADATA),drain=readSmall(DRAIN),eos=readSmall(STREAM_MARKER .. ".eos")} end
+
+function acknowledgeDrain(self, token)
+    if not token or readSmall(DRAIN) ~= token then return false end
+    local tmp = DRAIN .. ".ack.tmp"
+    local f = io.open(tmp, "w"); if not f then return false end
+    local written = f:write(token); f:close()
+    if not written then return false end
+    return os.rename(tmp, DRAIN .. ".ack") and true or false
+end
+
+function _verifyStart(self, operation, attempts)
+    if operation~=self.operation or not self.desiredRunning then return end
+    if self:isRunning() and self:_bridgeRunning() then self.lifecycleState="running"; self.lastError=nil; return end
+    if attempts<=0 then self.lastError="Spotify services failed to start"; self.lifecycleState="error"; self:stop(true); return end
+    self.startTimer=Timer(250,function() self.startTimer=nil; self:_verifyStart(operation,attempts-1) end,true); self.startTimer:start()
+end
+function _startHealthMonitor(self)
+    if self.healthTimer then return end
+    self.healthTimer=Timer(10000,function()
+        if self.desiredRunning and self:getMode()~="disabled" and self.lifecycleState~="starting" and self.lifecycleState~="stopping"
+            and (not self:isRunning() or not self:_bridgeRunning()) then
+            self.lastError="Spotify service stopped unexpectedly; recovering"
+            self:start(false)
+        end
+    end); self.healthTimer:start()
 end
 function start(self, pairing)
-    if self:isRunning() then return true end
-    -- A failed librespot launch can leave the independently running bridge
-    -- behind. Remove only processes owned by this applet before rebinding its
-    -- fixed localhost port; otherwise every retry fails with EADDRINUSE.
-    os.execute("for n in ogg-http-bridge librespot spotify-supervisor; do for p in `pidof $n 2>/dev/null`; do kill -KILL $p 2>/dev/null; done; done; rm -f " .. q(PID) .. " " .. q(BPID) .. " " .. q(FIFO))
-    if not prepareRuntime() then return false end
-    os.execute("mkdir -p " .. q(USER) .. "; chmod 700 " .. q(USER) .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(STREAM_MARKER))
-    os.execute("test -p " .. q(FIFO) .. " || mkfifo " .. q(FIFO) .. "; chmod 600 " .. q(FIFO))
+    if self.ownershipFenced then return false end
+    if self:getMode()=="disabled" then self.lastError="Spotify Connect is disabled"; self.lifecycleState="stopped"; return false end
+    self.desiredRunning=true; self:_startHealthMonitor(); self.operation=self.operation+1; local operation=self.operation
+    if self:isRunning() and self:_bridgeRunning() then self.lifecycleState="running"; self.lastError=nil; return true end
+    if self.lifecycleState=="stopping" then return true end
+    if self:isRunning() or self:_bridgeRunning() or owned(CPID,"librespot") then
+        self.lifecycleState="stopping"; signalOwned(PID,"spotify-supervisor","TERM"); signalOwned(CPID,"librespot","TERM"); signalOwned(BPID,"ogg-http-bridge","TERM"); self:_finishStop(operation,12); return true
+    end
+    if not prepareRuntime() then self.lastError="Required runtime files are unavailable"; self.lifecycleState="error"; return false end
+    os.execute("mkdir -p " .. q(USER) .. "; chmod 700 " .. q(USER) .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(METADATA_POSITION) .. " " .. q(STREAM_MARKER) .. " " .. q(STREAM_MARKER .. ".eos") .. " " .. q(DRAIN) .. " " .. q(DRAIN .. ".ack") .. " " .. q(PID) .. " " .. q(BPID) .. " " .. q(CPID))
+    if os.execute("test -p " .. q(FIFO) .. " || mkfifo " .. q(FIFO) .. "; chmod 600 " .. q(FIFO))~=0 then self.lastError="Could not create audio FIFO"; self.lifecycleState="error"; return false end
     os.execute("( exec 3<>" .. q(FIFO) .. "; exec " .. q(RUNTIME .. "/ogg-http-bridge") .. " 17880 --stream-marker " .. q(STREAM_MARKER) .. " --loading-marker " .. q(METADATA_LOADING) .. " <" .. q(FIFO) .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(BPID))
-    local auth = ""; if pairing or not self:credentialsExist() then auth = " --enable-device-auth" end
-    local settings = self.applet._settings or {}
-    local name = settings.deviceName or "Squeezebox Radio"
-    if name == "Squeezebox Radio" then name = defaultName() end
-    local metadataCommand = RUNTIME .. "/spotify-metadata " .. METADATA
-    local cmd = "( exec " .. q(RUNTIME .. "/spotify-supervisor") .. " --status " .. q(STATUS) .. " -- " .. q(RUNTIME .. "/librespot") ..
-        " --name " .. q(name) .. " --onevent " .. q(metadataCommand) .. " --backend pipe --device " .. q(FIFO) .. " --passthrough --disable-audio-cache --disable-discovery --system-cache " .. q(USER) .. " --bitrate 96" .. auth .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(PID)
-    os.execute(cmd); return true
+    local auth=(pairing or not self:credentialsExist()) and " --enable-device-auth" or ""; local settings=self.applet._settings or {}; local name=settings.deviceName or modelName; if name==modelName or name=="Squeezebox Radio" then name=defaultName() end
+    local metadataCommand=RUNTIME .. "/spotify-metadata " .. METADATA
+    local cmd="( export SBSPOTIFY_DRAIN_PATH=" .. q(DRAIN) .. "; exec " .. q(RUNTIME .. "/spotify-supervisor") .. " --status " .. q(STATUS) .. " --child-pid " .. q(CPID) .. " -- " .. q(RUNTIME .. "/librespot") .. " --name " .. q(name) .. " --onevent " .. q(metadataCommand) .. " --backend pipe --device " .. q(FIFO) .. " --passthrough --disable-audio-cache --disable-discovery --system-cache " .. q(USER) .. " --bitrate 96" .. auth .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(PID)
+    if os.execute(cmd)~=0 then self.lastError="Could not launch Spotify supervisor"; self.lifecycleState="error"; self:stop(true); return false end
+    self.lifecycleState="starting"; self.lastError=nil; self:_verifyStart(operation,20); return true
 end
-function stop(self)
-    local cmd = "if test -s " .. q(PID) .. "; then kill -TERM `cat " .. q(PID) .. "` 2>/dev/null; fi; if test -s " .. q(BPID) .. "; then kill -TERM `cat " .. q(BPID) .. "` 2>/dev/null; fi; for n in ogg-http-bridge librespot spotify-supervisor; do for p in `pidof $n 2>/dev/null`; do kill -TERM $p 2>/dev/null; done; done; sleep 1; rm -f " .. q(PID) .. " " .. q(BPID) .. " " .. q(FIFO)
-    os.execute(cmd .. "; rm -rf " .. q(RUNTIME) .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(STREAM_MARKER))
+function _finishStop(self, operation, attempts)
+    if operation~=self.operation then return end
+    if not self:isRunning() and not self:_bridgeRunning() and not owned(CPID,"librespot") then
+        cleanupRuntime(); self.lifecycleState="stopped"
+        if self.desiredRunning then self:start(false) end
+        return
+    end
+    if attempts<=0 then signalOwned(PID,"spotify-supervisor","KILL"); signalOwned(CPID,"librespot","KILL"); signalOwned(BPID,"ogg-http-bridge","KILL"); cleanupRuntime(); self.lifecycleState="stopped"; if self.desiredRunning then self:start(false) end; return end
+    self.stopTimer=Timer(250,function() self.stopTimer=nil; self:_finishStop(operation,attempts-1) end,true); self.stopTimer:start()
 end
-function restart(self) self:stop(); Timer(400, function() self:start(false) end, true):start(); return true end
-function disconnect(self) self:stop(); os.execute("rm -f " .. q(USER .. "/credentials.json") .. " " .. q(USER .. "/volume")) end
+function stop(self, force)
+    if self:getMode()=="always_on" and not force then self.lastError="Change Operating Mode to Manual before stopping"; return false end
+    self.desiredRunning=false; self.operation=self.operation+1; local operation=self.operation
+    if self.startTimer then self.startTimer:stop(); self.startTimer=nil end
+    if not self:isRunning() and not self:_bridgeRunning() and not owned(CPID,"librespot") then cleanupRuntime(); self.lifecycleState="stopped"; return true end
+    self.lifecycleState="stopping"; if self.applet and self.applet.playback then self.applet.playback:stop() end; if self.applet and self.applet.standaloneNowPlaying then self.applet.standaloneNowPlaying:release() end
+    signalOwned(PID,"spotify-supervisor","TERM"); signalOwned(CPID,"librespot","TERM"); signalOwned(BPID,"ogg-http-bridge","TERM"); self:_finishStop(operation,12); return true
+end
+function restart(self)
+    if self.ownershipFenced then return false end
+    if self:getMode()=="disabled" then self.lastError="Spotify Connect is disabled"; return false end
+    local result=self:stop(true); self.desiredRunning=true
+    if self.lifecycleState=="stopped" then return self:start(false) end
+    return result
+end
+function disconnect(self)
+    self:stop(true); os.execute("rm -f " .. q(USER .. "/credentials.json") .. " " .. q(USER .. "/volume")); if self.applet and self.applet._settings then self.applet._settings.enabled=false end
+end
+function shutdown(self) if self.healthTimer then self.healthTimer:stop(); self.healthTimer=nil end; self:stop(true) end
+
+-- Requires a qualified asynchronous native supervisor/bridge driver. Existing
+-- shell stop helpers are deliberately not called on the Jive ownership path.
+function ownershipFence(self)
+    self.ownershipFenced=true;self.operation=self.operation+1
+    self.desiredRunning=false
+    for _,key in ipairs({"healthTimer","startTimer","stopTimer"}) do
+        if self[key] then self[key]:stop();self[key]=nil end
+    end
+    return true
+end
+function ownershipStop(self,done)
+    local operation=self.operation
+    if not self.ownershipDriver then done(false);return end
+    self.ownershipDriver:stop(operation,function(result)
+        if operation~=self.operation then return end
+        done(type(result)=="table" and result.operation==operation and result.producer_stopped==true and result.restart_fenced==true)
+    end)
+end
+function ownershipGranted(self) self.ownershipFenced=false end
+
 return _M

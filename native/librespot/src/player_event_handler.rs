@@ -138,7 +138,8 @@ impl EventHandler {
                                 env_vars.insert("TRACK_ID", track_id.to_id());
                                 env_vars.insert("POSITION_MS", position_ms.to_string());
                             }
-                            PlayerEvent::Loading { track_id, .. } => {
+                            PlayerEvent::Loading { track_id, play_request_id, .. } => {
+                                env_vars.insert("PLAY_REQUEST_ID", play_request_id.to_string());
                                 env_vars.insert("PLAYER_EVENT", "loading".to_string());
                                 env_vars.insert("TRACK_ID", track_id.to_id());
                             }

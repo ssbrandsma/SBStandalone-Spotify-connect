@@ -11,7 +11,9 @@ def test_status_reader_with_volume_and_track_changes():
     lua.execute('''
         files = {}
         package.loaded["loop.simple"] = { class = function() end }
-        package.loaded["jive.ui.Timer"] = function() end
+        package.loaded["jive.ui.Timer"] = function(ms, callback, once)
+            return {start=function() end, stop=function() end}
+        end
         package.loaded["os"] = { execute = function() return 0 end }
         package.loaded["io"] = { open = function(path)
             local value = files[path]
@@ -30,6 +32,7 @@ def test_status_reader_with_volume_and_track_changes():
     files[base + "metadata.json.state"] = "playing\n"
     files[base + "metadata.json.volume"] = "38911"
     files[base + "metadata.json.loading"] = "loading-track\n"
+    files[base + "metadata.json.position"] = "first\n12345"
     files[base + "stream.ready"] = "2:1234\n"
     for state, track, volume in [('playing', 'first', 38911), ('paused', 'second', 0), ('stopped', 'third', 65535)]:
         files[base + "metadata.json.state"] = state
@@ -40,6 +43,8 @@ def test_status_reader_with_volume_and_track_changes():
         assert data.track_id == track
         assert data.volume == volume
         assert data.title == 'Title with "quotes"'
+        if track == 'first':
+            assert data.position_ms == 12345
     events = service.eventData(service)
     assert events.loading == "loading-track"
     assert events.stream == "2:1234"
@@ -52,10 +57,12 @@ def test_service_runs_native_helpers_from_ram():
     lua.execute('''
         commands = {}
         package.loaded["loop.simple"] = { class = function() end }
-        package.loaded["jive.ui.Timer"] = function() end
+        package.loaded["jive.ui.Timer"] = function(ms, callback, once)
+            return {start=function() end, stop=function() end}
+        end
         package.loaded["os"] = { execute = function(command)
             table.insert(commands, command)
-            if string.find(command, "kill %-0") then return 1 end
+            if string.find(command, "/proc/%$p/cmdline") then return 1 end
             if string.find(command, "credentials.json") then return 1 end
             return 0
         end }
@@ -74,7 +81,7 @@ def test_service_runs_native_helpers_from_ram():
     assert any("'/dev/spotify-connect-runtime/librespot'" in command for command in launch_commands)
 
 
-def test_watcher_switches_tracks_and_applies_u16_volume():
+def make_watcher():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute('''
             timers, volumes = {}, {}
@@ -106,7 +113,9 @@ def test_watcher_switches_tracks_and_applies_u16_volume():
             table.insert(timers, t); return t
         end
         package.loaded['applets.SpotifyConnect.SpotifyService'] = function()
-            return {init=function() end, eventData=function() return data end}
+            return {init=function() end, eventData=function() return data end, statusData=function() return data end,
+                    getMode=function() return 'manual' end, isRunning=function() return true end,
+                    shutdown=function() end}
         end
             package.loaded['applets.SpotifyConnect.SpotifyPlayback'] = function()
                 return {init=function() end, stop=function() stops=stops+1 end,
@@ -115,16 +124,32 @@ def test_watcher_switches_tracks_and_applies_u16_volume():
                         setRemoteVolume=function(_, v) table.insert(volumes, v); return true end,
                         start=function() starts=starts+1 end}
         end
-        package.loaded['applets.SpotifyConnect.SpotifyNowPlaying'] = {new=function() return {} end}
+        package.loaded['applets.SpotifyConnect.SpotifyStandaloneNowPlaying'] = {new=function() return {
+            activate=function() end, update=function() end, release=function() end, shutdown=function() end
+        } end}
+        package.loaded['applets.SpotifyConnect.SpotifyNativeNowPlaying'] = {new=function() return {
+            request=function() end, cancel=function() end, shutdown=function() end
+        } end}
         package.loaded['applets.SpotifyConnect.SpotifyConnectState'] = {}
         popups = 0
         package.loaded['jive.slim.Player'] = {getLocalPlayer=function()
             return {volumeLocal=function(_, v) table.insert(volumes, v) end}
         end}
+        radioStops = 0
+        radioStreamPlayer = {ownsPlayback=true, desiredStation={id='radio'},
+            stop=function(self) radioStops=radioStops+1; self.ownsPlayback=false end}
+        appletManager = {getAppletInstance=function(_, name)
+            if name == 'StandaloneRadio' then return {streamPlayer=radioStreamPlayer} end
+        end}
     ''')
     path = Path(__file__).parents[1] / 'applet/SpotifyConnectApplet.lua'
     applet = lua.execute(path.read_text(), 'applet_test')
     applet.init(applet)
+    return lua, applet
+
+
+def test_watcher_switches_tracks_and_applies_u16_volume():
+    lua, applet = make_watcher()
     watcher = applet._trackWatcher
     watcher.callback()
     assert lua.globals().volumes[1] == 50
@@ -132,6 +157,8 @@ def test_watcher_switches_tracks_and_applies_u16_volume():
     lua.globals().data.loading = 'second'
     lua.globals().data.volume = 0
     watcher.callback()
+    assert lua.globals().radioStops == 1
+    assert lua.globals().radioStreamPlayer.desiredStation is None
     # Keep the existing HTTP client alive until the bridge observes the new
     # Ogg stream. Closing it on "loading" makes the bounded bridge retain an
     # old page while the applet waits forever for the new stream marker.
@@ -139,6 +166,7 @@ def test_watcher_switches_tracks_and_applies_u16_volume():
     assert lua.globals().starts == 0
     lua.globals().data.stream = '1:22'
     watcher.callback()
+    assert lua.globals().radioStops == 1
     assert lua.globals().stops == 0
     assert lua.globals().starts == 1
     assert lua.globals().volumes[2] == 0
