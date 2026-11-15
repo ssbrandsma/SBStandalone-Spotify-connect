@@ -183,6 +183,15 @@ def test_native_navigation_coalesces_and_rejects_stale_retry():
     nav = mod.new(lua.table_from({"appletManager":lua.globals().manager,"framework":lua.globals().framework,
         "timerFactory":lua.globals().timerFactory,"getGeneration":lambda: generation["value"]}))
     nav.request(nav, 1); lua.globals().timers[1].callback(); assert lua.globals().calls == 1
-    lua.globals().current = True
-    nav.request(nav, 1); lua.globals().timers[2].callback(); assert lua.globals().calls == 1
-    nav.request(nav, 1); generation["value"] = 2; lua.globals().timers[3].callback(); assert lua.globals().calls == 1
+    # The user has moved to the stock playlist. Another track/metadata epoch
+    # must leave that window alone, even though NowPlaying is no longer current.
+    generation["value"] = 2
+    nav.request(nav, 2)
+    assert len(lua.globals().timers) == 1 and lua.globals().calls == 1
+    nav.cancel(nav)
+    generation["value"] = 3
+    nav.request(nav, 3); lua.globals().timers[2].callback()
+    assert lua.globals().calls == 2
+    nav.cancel(nav)
+    nav.request(nav, 3); generation["value"] = 4; lua.globals().timers[3].callback()
+    assert lua.globals().calls == 2

@@ -34,16 +34,20 @@ function Navigation:_open(generation, attempt)
         self:_schedule(generation, attempt + 1); return
     end
     local okApplet, applet = pcall(function() return manager:getAppletInstance("NowPlaying") end)
-    if okApplet and applet and applet.window and self.framework:isCurrentWindow(applet.window) then return end
+    if okApplet and applet and applet.window and self.framework:isCurrentWindow(applet.window) then self.presented=true;return end
     local ok, result = pcall(function() return manager:callService("goNowPlaying", self.transition) end)
-    if not ok or result == false then self:_schedule(generation, attempt + 1) end
+    if not ok or result == false then self:_schedule(generation, attempt + 1) else self.presented=true end
 end
 
 function Navigation:request(generation)
     if not generation then return false end
-    self.generation = generation; self:_schedule(generation, 1); return true
+    self.generation = generation
+    -- Track epochs change within one Connect session. Once opened, metadata
+    -- must not pull the user back from the original playlist or another menu.
+    if self.presented then self:_cancel();return true end
+    self:_schedule(generation, 1); return true
 end
 
-function Navigation:cancel() self.generation = nil; self:_cancel() end
+function Navigation:cancel() self.generation = nil;self.presented=false;self:_cancel() end
 Navigation.shutdown = Navigation.cancel
 return _M
