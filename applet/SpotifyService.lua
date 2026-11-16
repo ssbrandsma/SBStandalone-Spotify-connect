@@ -5,11 +5,18 @@ local os, io = require("os"), require("io")
 local pcall, type, tonumber, tostring = pcall, type, tonumber, tostring
 local okJson, json = pcall(require, "json")
 if not okJson then json = nil end
-local okSystem, System = pcall(require, "jive.System")
+local okPlatform, Platform = pcall(require, "applets.SpotifyConnect.SpotifyPlatform")
+if not okPlatform then Platform = nil end
+local machine = Platform and Platform.machine()
 local modelName = "Squeezebox Radio"
-if okSystem then
-    local okMachine, machine = pcall(function() return System:getMachine() end)
-    if okMachine and machine == "fab4" then modelName = "Squeezebox Touch" end
+if Platform then
+    modelName = Platform.modelName(machine)
+else
+    local okSystem, System = pcall(require, "jive.System")
+    if okSystem then
+        local okMachine, detected = pcall(function() return System:getMachine() end)
+        if okMachine and detected == "fab4" then modelName = "Squeezebox Touch" end
+    end
 end
 module(...)
 oo.class(_M)
@@ -17,12 +24,18 @@ oo.class(_M)
 local ROOT = "/usr/share/jive/applets/SpotifyConnect"
 local RUNTIME = "/dev/spotify-connect-runtime"
 local USER = "/etc/squeezeplay/userpath/SpotifyConnect"
-local FIFO, PID, BPID = USER .. "/audio.fifo", USER .. "/supervisor.pid", USER .. "/bridge.pid"
-local CPID, STATUS = USER .. "/librespot.pid", USER .. "/status.json"
-local METADATA, STREAM_MARKER, LOG = USER .. "/metadata.json", USER .. "/stream.ready", USER .. "/engine.log"
+if Platform then
+    ROOT = Platform.appletRoot(machine)
+    USER = Platform.userDir(machine)
+end
+local STATE = USER
+if Platform then STATE = Platform.stateDir(machine, RUNTIME) end
+local FIFO, PID, BPID = STATE .. "/audio.fifo", STATE .. "/supervisor.pid", STATE .. "/bridge.pid"
+local CPID, STATUS = STATE .. "/librespot.pid", STATE .. "/status.json"
+local METADATA, STREAM_MARKER, LOG = STATE .. "/metadata.json", STATE .. "/stream.ready", STATE .. "/engine.log"
 local METADATA_STATE, METADATA_VOLUME = METADATA .. ".state", METADATA .. ".volume"
 local METADATA_LOADING, METADATA_POSITION = METADATA .. ".loading", METADATA .. ".position"
-local DRAIN = USER .. "/output.drain"
+local DRAIN = STATE .. "/output.drain"
 local MODES = { disabled=true, manual=true, always_on=true }
 local function q(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 local function readSmall(path)
@@ -153,7 +166,8 @@ function start(self, pairing)
         self.lifecycleState="stopping"; signalOwned(PID,"spotify-supervisor","TERM"); signalOwned(CPID,"librespot","TERM"); signalOwned(BPID,"ogg-http-bridge","TERM"); self:_finishStop(operation,12); return true
     end
     if not prepareRuntime() then self.lastError="Required runtime files are unavailable"; self.lifecycleState="error"; return false end
-    os.execute("mkdir -p " .. q(USER) .. "; chmod 700 " .. q(USER) .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(METADATA_POSITION) .. " " .. q(STREAM_MARKER) .. " " .. q(STREAM_MARKER .. ".eos") .. " " .. q(DRAIN) .. " " .. q(DRAIN .. ".ack") .. " " .. q(PID) .. " " .. q(BPID) .. " " .. q(CPID))
+    local stateInit = STATE ~= USER and ("; mkdir -p " .. q(STATE) .. "; chmod 700 " .. q(STATE)) or ""
+    os.execute("mkdir -p " .. q(USER) .. "; chmod 700 " .. q(USER) .. stateInit .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(METADATA_POSITION) .. " " .. q(STREAM_MARKER) .. " " .. q(STREAM_MARKER .. ".eos") .. " " .. q(DRAIN) .. " " .. q(DRAIN .. ".ack") .. " " .. q(PID) .. " " .. q(BPID) .. " " .. q(CPID))
     if os.execute("test -p " .. q(FIFO) .. " || mkfifo " .. q(FIFO) .. "; chmod 600 " .. q(FIFO))~=0 then self.lastError="Could not create audio FIFO"; self.lifecycleState="error"; return false end
     os.execute("( exec 3<>" .. q(FIFO) .. "; exec " .. q(RUNTIME .. "/ogg-http-bridge") .. " 17880 --stream-marker " .. q(STREAM_MARKER) .. " --loading-marker " .. q(METADATA_LOADING) .. " <" .. q(FIFO) .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(BPID))
     local auth=(pairing or not self:credentialsExist()) and " --enable-device-auth" or ""; local settings=self.applet._settings or {}; local name=settings.deviceName or modelName; if name==modelName or name=="Squeezebox Radio" then name=defaultName() end

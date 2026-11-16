@@ -12,11 +12,17 @@ local jiveMain = jiveMain
 local appletManager = appletManager
 local EVENT_WINDOW_POP = jive.ui.EVENT_WINDOW_POP
 local state = require("applets.SpotifyConnect.SpotifyConnectState")
-local okSystem, System = pcall(require, "jive.System")
+local okPlatform, Platform = pcall(require, "applets.SpotifyConnect.SpotifyPlatform")
+if not okPlatform then Platform = nil end
 local modelName = "Squeezebox Radio"
-if okSystem then
-    local okMachine, machine = pcall(function() return System:getMachine() end)
-    if okMachine and machine == "fab4" then modelName = "Squeezebox Touch" end
+if Platform then
+    modelName = Platform.modelName()
+else
+    local okSystem, System = pcall(require, "jive.System")
+    if okSystem then
+        local okMachine, machine = pcall(function() return System:getMachine() end)
+        if okMachine and machine == "fab4" then modelName = "Squeezebox Touch" end
+    end
 end
 module(...)
 oo.class(_M, AppletMeta)

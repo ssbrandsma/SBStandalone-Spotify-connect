@@ -19,6 +19,8 @@ local os = require("os")
 local Log = require("jive.utils.log")
 local state = require("applets.SpotifyConnect.SpotifyConnectState")
 local pcall, tostring = pcall, tostring
+local okPlatform, Platform = pcall(require, "applets.SpotifyConnect.SpotifyPlatform")
+if not okPlatform then Platform = nil end
 local appletManager = appletManager
 
 module(..., Framework.constants)
@@ -68,7 +70,9 @@ local function showRemoteVolume(self, percent)
 end
 
 function init(self)
-    os.execute("chmod 755 /usr/share/jive/applets/SpotifyConnect/librespot /usr/share/jive/applets/SpotifyConnect/ogg-http-bridge /usr/share/jive/applets/SpotifyConnect/spotify-metadata /usr/share/jive/applets/SpotifyConnect/spotify-metadata-event /usr/share/jive/applets/SpotifyConnect/spotify-supervisor 2>/dev/null")
+    local root = "/usr/share/jive/applets/SpotifyConnect"
+    if Platform then root = Platform.appletRoot() end
+    os.execute("chmod 755 " .. root .. "/librespot " .. root .. "/ogg-http-bridge " .. root .. "/spotify-metadata " .. root .. "/spotify-metadata-event " .. root .. "/spotify-supervisor 2>/dev/null")
     self._settings = self._settings or { enabled = false, deviceName = "Squeezebox Radio" }
     state.applet = self
     self.service = SpotifyService()

@@ -4,8 +4,13 @@ ROOT = Path(__file__).parents[1]
 
 def test_required_sources_exist():
     for name in ("SpotifyConnectMeta.lua", "SpotifyConnectApplet.lua", "SpotifyService.lua", "SpotifyPlayback.lua",
-                 "SpotifyStandaloneNowPlaying.lua", "SpotifyNativeNowPlaying.lua", "SpotifyUrlTransport.lua", "strings.txt"):
+                 "SpotifyStandaloneNowPlaying.lua", "SpotifyNativeNowPlaying.lua", "SpotifyUrlTransport.lua",
+                 "SpotifyOwnership.lua", "SpotifyPlatform.lua", "qrencode.lua", "strings.txt"):
         assert (ROOT / "applet" / name).is_file()
+
+
+def test_platform_module_is_packaged():
+    assert "'SpotifyPlatform.lua'" in (ROOT / "build/package.ps1").read_text()
 
 def test_custom_now_playing_is_not_referenced():
     assert "SpotifyNowPlaying" not in (ROOT / "applet/SpotifyConnectApplet.lua").read_text()

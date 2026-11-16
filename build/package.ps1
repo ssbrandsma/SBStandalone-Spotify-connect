@@ -46,6 +46,7 @@ $RequiredEntries = @(
     'SpotifyUrlTransport.lua',
     'SpotifyPlayback.lua',
     'SpotifyOwnership.lua',
+    'SpotifyPlatform.lua',
     'SpotifyService.lua',
     'strings.txt'
 )
