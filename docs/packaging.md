@@ -16,6 +16,34 @@ and Squeezebox Touch (`fab4`) targets. The applet detects the firmware machine
 identifier and uses the matching default Spotify device name. Custom names
 are preserved.
 
+## RG35XX H (`rg35xxh`)
+
+The RG35XX H needs its own AArch64 package; the ARMv5 baby/fab4 binaries
+cannot run on it. Build and package it separately (no WSL needed — the
+toolchain script is rootless):
+
+```bash
+./build/build-native-rg35xxh.sh
+```
+
+then from PowerShell:
+
+```powershell
+./build/package.ps1 -Hardware rg35xxh
+```
+
+This produces `dist/SpotifyConnect-<version>-rg35xxh.zip` and regenerates
+`dist/extensions.xml` from every versioned ZIP present in `dist/`: with both
+artifacts built, the XML carries `baby` + `fab4` (shared ZIP) and `rg35xxh`
+entries. Publish all three files (`extensions.xml` + both ZIPs) in the
+server's `sbspotifyconnect` web directory.
+
+On the device, SqueezeboxGo queries `target:rg35xxh` and installs the
+AArch64 package through the standard Jive Applet Installer. The Lua payload
+is identical across targets; only the four native binaries differ. See
+`BUILD-RG35XXH.md` for the native build and `INSTALL-RG35XXH.md` for the
+device-side flow.
+
 By default, package URLs point to
 `http://49.12.198.91/sbspotifyconnect`. Publish both `extensions.xml` and the
 versioned ZIP in the server's `sbspotifyconnect` web directory so the stock

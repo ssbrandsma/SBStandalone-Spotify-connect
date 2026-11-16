@@ -5,7 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HARDWARE="${1:-all}"
 case "$HARDWARE" in
     baby|fab4|all) ;;
-    *) echo "Usage: $0 [baby|fab4|all]" >&2; exit 2 ;;
+    rg35xxh) exec "$ROOT/build/build-native-rg35xxh.sh" ;;
+    *) echo "Usage: $0 [baby|fab4|rg35xxh|all]" >&2; exit 2 ;;
 esac
 # Both i.MX CPUs run this baseline: ARMv5TE, EABI soft-float, static musl.
 # Keep the Linux 2.6 shim for the stock firmware on both models.

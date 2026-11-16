@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('baby', 'fab4', 'all')]
+    [ValidateSet('baby', 'fab4', 'all', 'rg35xxh')]
     [string]$Hardware = 'all'
 )
 $ErrorActionPreference = 'Stop'
@@ -11,4 +11,8 @@ $LinuxScript = (wsl -d Ubuntu-24.04 -- wslpath -a ($PSScriptRoot.Replace('\', '/
 if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve build script in WSL' }
 wsl -d Ubuntu-24.04 -- bash $LinuxScript $Hardware
 if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE" }
-Write-Host "Native Spotify binaries built for $Hardware in $Out (shared baby/fab4 runtime)"
+if ($Hardware -eq 'rg35xxh') {
+    Write-Host "Native Spotify binaries built for rg35xxh in $Out/rg35xxh (AArch64 runtime)"
+} else {
+    Write-Host "Native Spotify binaries built for $Hardware in $Out (shared baby/fab4 runtime)"
+}

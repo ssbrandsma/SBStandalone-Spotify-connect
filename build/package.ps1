@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$BaseUrl,
-    [string]$OutputDirectory
+    [string]$OutputDirectory,
+    [ValidateSet('baby', 'fab4', 'all', 'rg35xxh')]
+    [string]$Hardware = 'all'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,8 +30,12 @@ $BaseUrl = $BaseUrl.TrimEnd('/')
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $Root 'dist' }
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 
-& "$PSScriptRoot/build-applet.ps1"
-$Stage = Join-Path $PSScriptRoot 'out/applet/SpotifyConnect'
+& "$PSScriptRoot/build-applet.ps1" -Hardware $Hardware
+$Stage = if ($Hardware -eq 'rg35xxh') {
+    Join-Path $PSScriptRoot 'out/applet-rg35xxh/SpotifyConnect'
+} else {
+    Join-Path $PSScriptRoot 'out/applet/SpotifyConnect'
+}
 $RequiredEntries = @(
     'librespot',
     'ogg-http-bridge',
@@ -57,7 +63,7 @@ foreach ($Entry in $RequiredEntries) {
 }
 
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
-$ZipName = "SpotifyConnect-$Version.zip"
+$ZipName = if ($Hardware -eq 'rg35xxh') { "SpotifyConnect-$Version-rg35xxh.zip" } else { "SpotifyConnect-$Version.zip" }
 $ZipPath = Join-Path $OutputDirectory $ZipName
 Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
 Push-Location $Stage
@@ -83,9 +89,33 @@ if ($ZipEntries | Where-Object { $_ -match '^(SpotifyConnect/|applet/)' }) {
     throw 'ZIP has an enclosing directory; Applet Installer requires runtime files at the archive root'
 }
 
-$ZipSha1 = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA1).Hash.ToLowerInvariant()
-$ZipUrl = "$BaseUrl/$ZipName"
 $Escape = { param([string]$Value) [System.Security.SecurityElement]::Escape($Value) }
+$EntryFor = {
+    param([string]$Target, [string]$Desc, [string]$FileName)
+    $Path = Join-Path $OutputDirectory $FileName
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
+    $Sha = (Get-FileHash -LiteralPath $Path -Algorithm SHA1).Hash.ToLowerInvariant()
+    $Url = "$BaseUrl/$FileName"
+    $Changes = 'Latch audio-completed events for reliable automatic track advancement; preserve complete endings and immediate manual skips; fix mobile selection and native Now Playing updates; remove UI shell polling.'
+    [pscustomobject]@{ Target = $Target; FileName = $FileName; Url = $Url; Sha = $Sha; Xml = @"
+    <applet name="SpotifyConnect" version="$(& $Escape $Version)" target="$Target" minTarget="7.7" maxTarget="*">
+      <title lang="EN">Spotify Connect</title>
+      <desc lang="EN">$Desc</desc>
+      <changes lang="EN">$Changes</changes>
+      <creator>Sjoerd Brandsma</creator>
+      <url>$(& $Escape $Url)</url>
+      <sha>$Sha</sha>
+    </applet>
+"@ }
+}
+$SharedZip = "SpotifyConnect-$Version.zip"
+$GoZip = "SpotifyConnect-$Version-rg35xxh.zip"
+$Entries = @(
+    (& $EntryFor 'baby' 'Standalone Spotify Connect playback for Logitech Squeezebox Radio. LMS is only needed to install the applet.' $SharedZip),
+    (& $EntryFor 'fab4' 'Standalone Spotify Connect playback for Logitech Squeezebox Touch. LMS is only needed to install the applet.' $SharedZip),
+    (& $EntryFor 'rg35xxh' 'Standalone Spotify Connect playback for the Anbernic RG35XX H running SqueezeboxGo. No LMS server is needed after installation.' $GoZip)
+) | Where-Object { $_ -ne $null }
+if ($Entries.Count -eq 0) { throw 'No installable ZIP artifacts found; packaging produced nothing' }
 $Xml = @"
 <?xml version="1.0" encoding="UTF-8"?>
 <extensions>
@@ -93,22 +123,7 @@ $Xml = @"
     <title lang="EN">Squeezebox Radio and Touch Spotify Connect Repository</title>
   </details>
   <applets>
-    <applet name="SpotifyConnect" version="$(& $Escape $Version)" target="baby" minTarget="7.7" maxTarget="*">
-      <title lang="EN">Spotify Connect</title>
-      <desc lang="EN">Standalone Spotify Connect playback for Logitech Squeezebox Radio. LMS is only needed to install the applet.</desc>
-      <changes lang="EN">Latch audio-completed events for reliable automatic track advancement; preserve complete endings and immediate manual skips; fix mobile selection and native Now Playing updates; remove UI shell polling.</changes>
-      <creator>Sjoerd Brandsma</creator>
-      <url>$(& $Escape $ZipUrl)</url>
-      <sha>$ZipSha1</sha>
-    </applet>
-    <applet name="SpotifyConnect" version="$(& $Escape $Version)" target="fab4" minTarget="7.7" maxTarget="*">
-      <title lang="EN">Spotify Connect</title>
-      <desc lang="EN">Standalone Spotify Connect playback for Logitech Squeezebox Touch. LMS is only needed to install the applet.</desc>
-      <changes lang="EN">Latch audio-completed events for reliable automatic track advancement; preserve complete endings and immediate manual skips; fix mobile selection and native Now Playing updates; remove UI shell polling.</changes>
-      <creator>Sjoerd Brandsma</creator>
-      <url>$(& $Escape $ZipUrl)</url>
-      <sha>$ZipSha1</sha>
-    </applet>
+$($Entries.Xml -join "`n")
   </applets>
 </extensions>
 "@
@@ -120,13 +135,13 @@ $XmlSha1 = (Get-FileHash -LiteralPath $XmlPath -Algorithm SHA1).Hash.ToLowerInva
 
 [xml]$Parsed = Get-Content -LiteralPath $XmlPath -Raw
 $Applets = @($Parsed.extensions.applets.applet)
-if ($Applets.Count -ne 2) {
-    throw 'Generated extensions.xml must contain exactly two SpotifyConnect targets'
+if ($Applets.Count -ne $Entries.Count) {
+    throw 'Generated extensions.xml did not round-trip with the expected entry count'
 }
-foreach ($Target in @('baby', 'fab4')) {
-    $Applet = @($Applets | Where-Object { $_.target -eq $Target })
-    if ($Applet.Count -ne 1 -or $Applet[0].name -ne 'SpotifyConnect' -or $Applet[0].version -ne $Version -or $Applet[0].url -ne $ZipUrl -or $Applet[0].sha -ne $ZipSha1) {
-        throw "Generated extensions.xml did not round-trip with the expected $Target package metadata"
+foreach ($Entry in $Entries) {
+    $Applet = @($Applets | Where-Object { $_.target -eq $Entry.Target })
+    if ($Applet.Count -ne 1 -or $Applet[0].name -ne 'SpotifyConnect' -or $Applet[0].version -ne $Version -or $Applet[0].url -ne $Entry.Url -or $Applet[0].sha -ne $Entry.Sha) {
+        throw "Generated extensions.xml did not round-trip with the expected $($Entry.Target) package metadata"
     }
 }
 
@@ -134,9 +149,10 @@ Write-Host 'Built Spotify Connect Applet Installer package'
 Write-Host "Version:        $Version"
 Write-Host "ZIP:            $ZipPath"
 Write-Host "ZIP size:       $((Get-Item -LiteralPath $ZipPath).Length) bytes"
-Write-Host "ZIP SHA-1:      $ZipSha1"
 Write-Host "Repository XML: $XmlPath"
 Write-Host "XML SHA-1:      $XmlSha1"
-Write-Host "ZIP URL:        $ZipUrl"
+foreach ($Entry in $Entries) {
+    Write-Host "Target $($Entry.Target): $($Entry.FileName) sha1=$($Entry.Sha)"
+}
 Write-Host 'Archive entries:'
 $ZipEntries | ForEach-Object { Write-Host "  $_" }
