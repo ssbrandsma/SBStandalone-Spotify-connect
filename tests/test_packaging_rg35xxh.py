@@ -108,6 +108,8 @@ def test_live_rg35xxh_package_contents_and_metadata(tmp_path):
     with zipfile.ZipFile(zippath) as archive:
         magic = archive.read("librespot")[:4]
         assert magic == b"\x7fELF"
+        for name in [n for n in names if n.endswith(".lua") or n in ("strings.txt", "spotify-metadata-event")]:
+            assert archive.read(name) == (ROOT / "applet" / name).read_bytes(), name
     if shutil.which("file") is not None:
         member = tmp_path / "librespot-probe"
         with zipfile.ZipFile(zippath) as archive:
