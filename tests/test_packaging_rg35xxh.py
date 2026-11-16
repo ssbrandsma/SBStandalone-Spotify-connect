@@ -121,6 +121,19 @@ def test_live_rg35xxh_package_contents_and_metadata(tmp_path):
     assert go[0].get("version") == version
     assert go[0].find("url").text == f"http://127.0.0.1:8080/testrepo/{zippath.name}"
     assert go[0].find("sha").text == hashlib.sha1(zippath.read_bytes()).hexdigest()
+    # LMS repository schema: every served entry carries the full element set
+    # the SqueezeCenter filter and the Jive installer expect.
+    for applet in applets:
+        assert applet.get("name") == "SpotifyConnect"
+        for attr in ("version", "target", "minTarget", "maxTarget"):
+            assert applet.get(attr), (applet.get("target"), attr)
+        for tag in ("title", "desc", "changes", "creator", "url", "sha"):
+            assert applet.find(tag) is not None and applet.find(tag).text, tag
+        assert len(applet.find("sha").text) == 40
+    # SqueezeboxGo Jive 9.0.0 must fall inside the advertised target range.
+    entry = go[0]
+    assert [int(p) for p in entry.get("minTarget").split(".")] <= [9, 0]
+    assert entry.get("maxTarget") == "*" or [int(p) for p in entry.get("maxTarget").split(".")] >= [9, 0]
     assert (tmp_path / "extensions.xml.sha1").read_text().strip() == \
         hashlib.sha1((tmp_path / "extensions.xml").read_bytes()).hexdigest()
     sidecar = tmp_path / f"{zippath.name}.sha256"
