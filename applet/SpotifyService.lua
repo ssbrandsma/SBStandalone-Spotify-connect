@@ -64,6 +64,17 @@ local function cleanupRuntime()
         " " .. q(METADATA_LOADING) .. " " .. q(METADATA_POSITION) .. " " .. q(STREAM_MARKER) ..
         " " .. q(STREAM_MARKER .. ".eos") .. " " .. q(DRAIN) .. " " .. q(DRAIN .. ".ack"))
 end
+local function reapOrphans()
+    -- SqueezeboxGo exits without rebooting: a crashed session can leave a
+    -- supervised receiver behind in the RAM runtime dir. Reclaim it at boot
+    -- so this Jive instance never adopts a stale session. TERM, grace, KILL.
+    -- The scan skips its own shell: its cmdline contains this very pattern.
+    local sweep = [[for d in /proc/[0-9]*; do p=${d#/proc/}; case $p in ''|*[!0-9]*) continue;; esac; if [ "$p" != "$$" ] && tr '\000' ' ' < $d/cmdline 2>/dev/null | grep -F -q %s; then kill -%s $p 2>/dev/null && reaped=1; fi; done]]
+    local quoted = q(RUNTIME .. "/")
+    os.execute("reaped=0; " .. sweep:format(quoted, "TERM") ..
+        " if [ $reaped -eq 1 ]; then sleep 1; " .. sweep:format(quoted, "KILL") .. "; fi")
+    cleanupRuntime()
+end
 local function prepareRuntime()
     local files="librespot ogg-http-bridge spotify-metadata spotify-metadata-event spotify-supervisor"
     local command="rm -rf " .. q(RUNTIME) .. "; mkdir -p " .. q(RUNTIME) ..
@@ -80,6 +91,7 @@ end
 
 function init(self, applet)
     self.applet=applet; self.desiredRunning=false; self.lifecycleState="stopped"; self.lastError=nil; self.operation=0
+    if Platform and Platform.isRg35xxh(machine) then reapOrphans() end
 end
 function getMode(self)
     local mode=self.applet and self.applet._settings and self.applet._settings.serviceMode
