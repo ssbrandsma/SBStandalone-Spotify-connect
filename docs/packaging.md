@@ -41,8 +41,8 @@ server's `sbspotifyconnect` web directory.
 On the device, SqueezeboxGo queries `target:rg35xxh` and installs the
 AArch64 package through the standard Jive Applet Installer. The Lua payload
 is identical across targets; only the four native binaries differ. See
-`BUILD-RG35XXH.md` for the native build and `INSTALL-RG35XXH.md` for the
-device-side flow.
+[BUILD-RG35XXH.md](../BUILD-RG35XXH.md) for the native build and
+[INSTALL-RG35XXH.md](../INSTALL-RG35XXH.md) for the device-side flow.
 
 By default, package URLs point to
 `http://49.12.198.91/sbspotifyconnect`. Publish both `extensions.xml` and the
