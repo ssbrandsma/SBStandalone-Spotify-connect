@@ -159,8 +159,8 @@ so a distinct entry is required to avoid serving the ARMv5 ZIP.
   either way; verify in P4/P6.
 - R4 Coexistence: reference standalone librespot service + applet must
   not run together (documented in KNOWN-ISSUES).
-- R5 Vendored librespot exact upstream base (a1b66d3c vs d36f9f19) +
-  local patch diff unresolved — pin during P2.
+- R5 Vendored librespot base — RESOLVED: `a1b66d3c` + 16-file patch
+  set, see `native/librespot/VENDORED.md`.
 
 ## 6. Open items
 

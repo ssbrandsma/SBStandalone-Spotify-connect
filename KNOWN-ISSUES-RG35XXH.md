@@ -20,8 +20,9 @@ Last updated: Phase 5 (host work complete; device validation pending).
    Lua inherits `SQUEEZEPLAY_HOME` from `launch.sh` (with `$HOME`, then
    `/tmp`, fallbacks). Confirm on device; wrong root fails loudly with
    `Required runtime files are unavailable`.
-5. **Vendored librespot base (R5).** Exact upstream base (a1b66d3c vs
-   d36f9f19) plus local patch diff is unpinned; pin during release.
+5. **Vendored librespot base: pinned.** Base is upstream
+   `a1b66d3c8a14e55a9572a9e17467150dca618c9a` (post-0.8.0) with the
+   16-file patch set inventoried in `native/librespot/VENDORED.md`.
 
 ## By design (not bugs)
 
