@@ -132,6 +132,11 @@ $XmlPath = Join-Path $OutputDirectory 'extensions.xml'
 [System.IO.File]::WriteAllText($XmlPath, $Xml, $Utf8NoBom)
 $XmlSha1 = (Get-FileHash -LiteralPath $XmlPath -Algorithm SHA1).Hash.ToLowerInvariant()
 [System.IO.File]::WriteAllText((Join-Path $OutputDirectory 'extensions.xml.sha1'), $XmlSha1, $Utf8NoBom)
+# SHA-256 sidecars are for human/CI verification; the Installer reads SHA-1 only.
+$ZipSha256 = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+[System.IO.File]::WriteAllText("$ZipPath.sha256", "$ZipSha256  $(Split-Path $ZipPath -Leaf)`n", $Utf8NoBom)
+$XmlSha256 = (Get-FileHash -LiteralPath $XmlPath -Algorithm SHA256).Hash.ToLowerInvariant()
+[System.IO.File]::WriteAllText("$XmlPath.sha256", "$XmlSha256  extensions.xml`n", $Utf8NoBom)
 
 [xml]$Parsed = Get-Content -LiteralPath $XmlPath -Raw
 $Applets = @($Parsed.extensions.applets.applet)

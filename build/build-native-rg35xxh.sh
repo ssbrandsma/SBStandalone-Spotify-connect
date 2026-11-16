@@ -81,5 +81,10 @@ printf '{"hardware":["rg35xxh"],"target":"%s","cpu":"cortex-a53","libc":"gnu-2.3
     echo "  }"
     echo "}"
 } > "$OUT/rg35xxh-build.json"
+if command -v python3 >/dev/null && python3 "$ROOT/build/gen-rg35xxh-sbom.py"; then
+    echo "sbom: $OUT/rg35xxh-sbom.json"
+else
+    echo "WARNING: SBOM not generated (needs python3.11+ and cargo)" >&2
+fi
 echo "binaries: $BIN"
 cat "$OUT/native-targets-rg35xxh.json"

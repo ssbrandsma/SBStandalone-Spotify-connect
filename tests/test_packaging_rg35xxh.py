@@ -5,6 +5,7 @@ the real stage/package flow under pwsh and report NOT RUN when pwsh or the
 rg35xxh binaries are absent.
 """
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -57,6 +58,24 @@ def test_package_builds_per_target_zips_and_merged_xml():
     assert "'rg35xxh'" in script
     assert "Anbernic RG35XX H running SqueezeboxGo" in script
     assert 'minTarget="7.7" maxTarget="*"' in script
+    assert '.sha256' in script
+
+
+def test_sbom_generator_marks_compiled_closure_with_licenses(tmp_path):
+    script = ROOT / "build/gen-rg35xxh-sbom.py"
+    assert "rustls-tls-webpki-roots,with-libmdns,passthrough-decoder,streaming-only" in script.read_text()
+    if shutil.which("cargo") is None:
+        pytest.skip("NOT RUN: cargo unavailable")
+    env = dict(os.environ, CARGO_HOME=os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo")))
+    result = subprocess.run(["python3", str(script)], capture_output=True, text=True, cwd=ROOT, env=env)
+    assert result.returncode == 0, result.stderr
+    sbom = json.loads((OUT / "rg35xxh-sbom.json").read_text())
+    assert sbom["target"] == "rg35xxh"
+    assert sbom["librespotBase"].startswith("a1b66d3c")
+    compiled = [c for c in sbom["crates"] if c["compiled"]]
+    assert len(compiled) > 200
+    assert all(not c["license"].startswith("unknown") for c in compiled)
+    assert not any(c["name"] in ("openssl", "alsa", "libpulse-binding") for c in compiled)
 
 
 def package(exe, tmp_path, hardware):
@@ -104,6 +123,11 @@ def test_live_rg35xxh_package_contents_and_metadata(tmp_path):
     assert go[0].find("sha").text == hashlib.sha1(zippath.read_bytes()).hexdigest()
     assert (tmp_path / "extensions.xml.sha1").read_text().strip() == \
         hashlib.sha1((tmp_path / "extensions.xml").read_bytes()).hexdigest()
+    sidecar = tmp_path / f"{zippath.name}.sha256"
+    assert sidecar.is_file()
+    digest, name = sidecar.read_text().split()
+    assert name == zippath.name
+    assert digest == hashlib.sha256(zippath.read_bytes()).hexdigest()
 
 
 def test_live_shared_zip_entry_shape_matches_published_repo(tmp_path):
