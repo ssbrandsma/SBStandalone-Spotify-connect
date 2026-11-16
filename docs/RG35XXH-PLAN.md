@@ -166,6 +166,9 @@ so a distinct entry is required to avoid serving the ARMv5 ZIP.
 
 - O1 installer removal ordering vs `free()/shutdown()` (inferred, not coded).
 - O2 NP contract expected by the RG35XX H Standalone Base port.
-- O3 `SQUEEZEPLAY_HOME` visibility inside Jive Lua (assumed; else parse
-  `/proc/self/environ` — decide in P1, verify in P6).
+- O3 `SQUEEZEPLAY_HOME` visibility inside Jive Lua — RESOLVED
+  (read-only recon 2026-11-17): live Jive env carries
+  `SQUEEZEPLAY_HOME=/opt/squeezebox-go/config/jive-home`; user applets
+  install under `$SQUEEZEPLAY_HOME/userpath/applets/` (StandaloneRadio
+  observed there). `os.getenv` fallback chain retained.
 - O4 fab4 on-device pairing/playback still unexercised (pre-existing gap).

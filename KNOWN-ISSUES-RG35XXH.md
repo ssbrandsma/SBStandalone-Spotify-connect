@@ -16,10 +16,12 @@ Last updated: Phase 5 (host work complete; device validation pending).
    (`jiveapplets target:rg35xxh`), so until the on-device LMS ships, a
    reachable (possibly temporary) LMS must host the repo for Method A.
    Playback never needs LMS. Method B (manual unzip) needs no LMS at all.
-4. **`SQUEEZEPLAY_HOME` visibility (O3).** Path resolution assumes Jive
-   Lua inherits `SQUEEZEPLAY_HOME` from `launch.sh` (with `$HOME`, then
-   `/tmp`, fallbacks). Confirm on device; wrong root fails loudly with
-   `Required runtime files are unavailable`.
+4. **`SQUEEZEPLAY_HOME` visibility: resolved.** Live Jive (0.2.3,
+   read-only recon) carries
+   `SQUEEZEPLAY_HOME=/opt/squeezebox-go/config/jive-home`, and user
+   applets install under `$SQUEEZEPLAY_HOME/userpath/applets/`.
+   `$HOME`, then `/tmp`, fallbacks retained. Wrong root still fails
+   loudly with `Required runtime files are unavailable`.
 5. **Vendored librespot base: pinned.** Base is upstream
    `a1b66d3c8a14e55a9572a9e17467150dca618c9a` (post-0.8.0) with the
    16-file patch set inventoried in `native/librespot/VENDORED.md`.
