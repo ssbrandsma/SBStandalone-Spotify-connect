@@ -87,6 +87,7 @@ def test_rg35xxh_user_dir_falls_back_to_home_then_tmp():
 
 def service_with_platform(machine, env, files, device_name):
     lua = LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("package.loaded['jive.utils.log'] = {logger=function() return {isDebug=function() return false end} end}")
     lua.execute("commands = {}")
     lua.execute("package.loaded['loop.simple'] = {class=function() end}")
     lua.execute("package.loaded['jive.ui.Timer'] = function() return {start=function() end, stop=function() end} end")

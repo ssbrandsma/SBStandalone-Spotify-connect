@@ -37,4 +37,17 @@ Fresh installations default to Manual so librespot, its supervisor, and the
 Ogg bridge consume no resources until requested. See
 [docs/service-lifecycle.md](docs/service-lifecycle.md).
 
+Native engine, supervisor, and bridge output goes through syslog with the
+`SpotifyConnect` tag and appears in Standalone Base's system log viewer
+(`/var/log/messages`). The logging pipe lives in RAM; the applet no longer
+appends to `userpath/SpotifyConnect/engine.log`. Existing copies of that old
+log are left untouched.
+
+Set the SqueezePlay `SpotifyConnect` logging category to DEBUG, then restart
+the Spotify Connect service to enable librespot debug output. Return the
+category to INFO and restart the service to restore normal verbosity.
+Logging changes are applied on service start so changing a category does
+not interrupt a playing track. Syslog records use `user.info`; librespot's
+original severity remains in the message text.
+
 Release 0.7.0 fixes natural track-end draining, manual list selection, and native Now Playing metadata updates. The UI watcher validates processes directly through `/proc` without spawning shell commands. Artwork is handled by StandaloneBase; the obsolete custom artwork and Now Playing implementations have been removed.

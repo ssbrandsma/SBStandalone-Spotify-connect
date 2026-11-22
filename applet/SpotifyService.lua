@@ -1,6 +1,7 @@
 local ipairs, type = ipairs, type
 local oo = require("loop.simple")
 local Timer = require("jive.ui.Timer")
+local Log = require("jive.utils.log")
 local os, io = require("os"), require("io")
 local pcall, type, tonumber, tostring = pcall, type, tonumber, tostring
 local okJson, json = pcall(require, "json")
@@ -32,7 +33,8 @@ local STATE = USER
 if Platform then STATE = Platform.stateDir(machine, RUNTIME) end
 local FIFO, PID, BPID = STATE .. "/audio.fifo", STATE .. "/supervisor.pid", STATE .. "/bridge.pid"
 local CPID, STATUS = STATE .. "/librespot.pid", STATE .. "/status.json"
-local METADATA, STREAM_MARKER, LOG = STATE .. "/metadata.json", STATE .. "/stream.ready", STATE .. "/engine.log"
+local METADATA, STREAM_MARKER = STATE .. "/metadata.json", STATE .. "/stream.ready"
+local LOG_PIPE = RUNTIME .. "/syslog.fifo"
 local METADATA_STATE, METADATA_VOLUME = METADATA .. ".state", METADATA .. ".volume"
 local METADATA_LOADING, METADATA_POSITION = METADATA .. ".loading", METADATA .. ".position"
 local DRAIN = STATE .. "/output.drain"
@@ -181,10 +183,21 @@ function start(self, pairing)
     local stateInit = STATE ~= USER and ("; mkdir -p " .. q(STATE) .. "; chmod 700 " .. q(STATE)) or ""
     os.execute("mkdir -p " .. q(USER) .. "; chmod 700 " .. q(USER) .. stateInit .. "; rm -f " .. q(STATUS) .. " " .. q(METADATA) .. " " .. q(METADATA_STATE) .. " " .. q(METADATA_VOLUME) .. " " .. q(METADATA_LOADING) .. " " .. q(METADATA_POSITION) .. " " .. q(STREAM_MARKER) .. " " .. q(STREAM_MARKER .. ".eos") .. " " .. q(DRAIN) .. " " .. q(DRAIN .. ".ack") .. " " .. q(PID) .. " " .. q(BPID) .. " " .. q(CPID))
     if os.execute("test -p " .. q(FIFO) .. " || mkfifo " .. q(FIFO) .. "; chmod 600 " .. q(FIFO))~=0 then self.lastError="Could not create audio FIFO"; self.lifecycleState="error"; return false end
-    os.execute("( exec 3<>" .. q(FIFO) .. "; exec " .. q(RUNTIME .. "/ogg-http-bridge") .. " 17880 --stream-marker " .. q(STREAM_MARKER) .. " --loading-marker " .. q(METADATA_LOADING) .. " <" .. q(FIFO) .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(BPID))
+    -- Keep stdout/stderr out of persistent userpath. logger drains this RAM
+    -- FIFO and exits at EOF once the bridge, supervisor and engine stop.
+    -- Redirection preserves the exec'd process PIDs used by ownership checks.
+    if os.execute("command -v logger >/dev/null 2>&1 && mkfifo " .. q(LOG_PIPE) .. " && chmod 600 " .. q(LOG_PIPE))~=0 then
+        self.lastError="Could not prepare syslog logging"; self.lifecycleState="error"; return false
+    end
+    os.execute("( exec logger -t SpotifyConnect -p user.info <" .. q(LOG_PIPE) .. " >/dev/null 2>&1 ) &")
+    os.execute("( exec 3<>" .. q(FIFO) .. "; exec " .. q(RUNTIME .. "/ogg-http-bridge") .. " 17880 --stream-marker " .. q(STREAM_MARKER) .. " --loading-marker " .. q(METADATA_LOADING) .. " <" .. q(FIFO) .. " >" .. q(LOG_PIPE) .. " 2>&1 ) & echo $! >" .. q(BPID))
     local auth=(pairing or not self:credentialsExist()) and " --enable-device-auth" or ""; local settings=self.applet._settings or {}; local name=settings.deviceName or modelName; if name==modelName or name=="Squeezebox Radio" then name=defaultName() end
     local metadataCommand=RUNTIME .. "/spotify-metadata " .. METADATA
-    local cmd="( export SBSPOTIFY_DRAIN_PATH=" .. q(DRAIN) .. "; exec " .. q(RUNTIME .. "/spotify-supervisor") .. " --status " .. q(STATUS) .. " --child-pid " .. q(CPID) .. " -- " .. q(RUNTIME .. "/librespot") .. " --name " .. q(name) .. " --onevent " .. q(metadataCommand) .. " --backend pipe --device " .. q(FIFO) .. " --passthrough --disable-audio-cache --disable-discovery --system-cache " .. q(USER) .. " --bitrate 96" .. auth .. " >>" .. q(LOG) .. " 2>&1 ) & echo $! >" .. q(PID)
+    -- Match the Jive category at service start; never restart active playback
+    -- just because the user changes a logging setting.
+    local logger=Log.logger("SpotifyConnect")
+    local rustLog=(logger:isDebug() and "librespot=debug" or "librespot=info") .. ",libmdns=info"
+    local cmd="( export RUST_LOG=" .. q(rustLog) .. " RUST_LOG_STYLE=never SBSPOTIFY_DRAIN_PATH=" .. q(DRAIN) .. "; exec " .. q(RUNTIME .. "/spotify-supervisor") .. " --status " .. q(STATUS) .. " --child-pid " .. q(CPID) .. " -- " .. q(RUNTIME .. "/librespot") .. " --name " .. q(name) .. " --onevent " .. q(metadataCommand) .. " --backend pipe --device " .. q(FIFO) .. " --passthrough --disable-audio-cache --disable-discovery --system-cache " .. q(USER) .. " --bitrate 96" .. auth .. " >" .. q(LOG_PIPE) .. " 2>&1 ) & echo $! >" .. q(PID)
     if os.execute(cmd)~=0 then self.lastError="Could not launch Spotify supervisor"; self.lifecycleState="error"; self:stop(true); return false end
     self.lifecycleState="starting"; self.lastError=nil; self:_verifyStart(operation,20); return true
 end

@@ -10,6 +10,7 @@ def test_status_reader_with_volume_and_track_changes():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute('''
         files = {}
+        package.loaded["jive.utils.log"] = {logger=function() return {isDebug=function() return debugLogging == true end} end}
         package.loaded["loop.simple"] = { class = function() end }
         package.loaded["jive.ui.Timer"] = function(ms, callback, once)
             return {start=function() end, stop=function() end}
@@ -56,6 +57,7 @@ def test_service_runs_native_helpers_from_ram():
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute('''
         commands = {}
+        package.loaded["jive.utils.log"] = {logger=function() return {isDebug=function() return debugLogging == true end} end}
         package.loaded["loop.simple"] = { class = function() end }
         package.loaded["jive.ui.Timer"] = function(ms, callback, once)
             return {start=function() end, stop=function() end}

@@ -9,6 +9,7 @@ def service_runtime(mode="manual", machine=None):
     lua.execute(r'''
       commands, timers = {}, {}
       processes = {supervisor=false, bridge=false, child=false}
+      package.loaded["jive.utils.log"] = {logger=function() return {isDebug=function() return debugLogging == true end} end}
       package.loaded['loop.simple'] = {class=function() end}
       package.loaded['jive.ui.Timer'] = function(ms, callback, once)
         local timer={ms=ms,callback=callback,once=once,started=false,stopped=false,
@@ -96,6 +97,40 @@ def test_manual_start_stop_are_idempotent_and_owned():
     commands = [lua.globals().commands[i] for i in range(1, len(lua.globals().commands) + 1)]
     assert any("/proc/$p/cmdline" in c and "spotify-supervisor" in c and "kill -TERM" in c for c in commands)
     assert not any("pidof" in c or "killall" in c or "pkill" in c for c in commands)
+
+
+def test_native_logs_use_syslog_and_debug_category_at_each_start():
+    lua, service, _ = service_runtime()
+    for debug in (False, True, False):
+        lua.globals().debugLogging = debug
+        lua.execute('commands = {}')
+        assert service.start(service, False) is True
+        commands = list(lua.globals().commands.values())
+        assert any('command -v logger' in c for c in commands)
+        assert any('exec logger -t SpotifyConnect -p user.info' in c for c in commands)
+        launches = [c for c in commands if 'exec ' in c and ('--stream-marker' in c or '--child-pid' in c)]
+        assert len(launches) == 2
+        assert all(">'/dev/spotify-connect-runtime/syslog.fifo'" in c for c in launches)
+        engine = next(c for c in launches if '--child-pid' in c)
+        assert ('librespot=debug' if debug else 'librespot=info') in engine
+        assert 'RUST_LOG_STYLE=never' in engine
+        assert not any('engine.log' in c for c in commands)
+        assert service.stop(service, False) is True
+
+
+def test_logging_setup_failure_does_not_start_native_services():
+    lua, service, _ = service_runtime()
+    lua.execute('''
+        local execute = package.loaded.os.execute
+        package.loaded.os.execute = function(command)
+            if string.find(command, 'command %-v logger') then return 1 end
+            return execute(command)
+        end
+    ''')
+    assert service.start(service, False) is False
+    assert service.getLastError(service) == 'Could not prepare syslog logging'
+    assert lua.globals().processes.bridge is False
+    assert lua.globals().processes.supervisor is False
 
 
 def test_disabled_rejects_start_and_preserves_credentials():

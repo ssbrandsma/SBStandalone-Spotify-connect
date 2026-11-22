@@ -100,6 +100,7 @@ def test_playback_completion_requires_audio_drain_and_current_owner():
 def test_drain_ack_is_atomic_and_rejects_cancelled_token(tmp_path):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute('''
+        package.loaded["jive.utils.log"] = {logger=function() return {isDebug=function() return debugLogging == true end} end}
         package.loaded['loop.simple'] = {class=function() end}
         package.loaded['jive.ui.Timer'] = {}
     ''')
